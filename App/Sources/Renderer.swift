@@ -46,17 +46,22 @@ final class Renderer: NSObject, MTKViewDelegate {
 
     weak var source: (any RenderSource)?
 
-    init?(view: MTKView) {
-        guard let device = view.device ?? MTLCreateSystemDefaultDevice(),
-              let queue = device.makeCommandQueue(),
-              let lib = device.makeDefaultLibrary() else { return nil }
-        self.device = device
-        self.queue = queue
+    convenience init?(view: MTKView) {
+        guard let device = view.device ?? MTLCreateSystemDefaultDevice() else { return nil }
+        self.init(device: device)
         view.device = device
         view.colorPixelFormat = .bgra8Unorm
         view.depthStencilPixelFormat = .invalid
         view.framebufferOnly = true
         view.preferredFramesPerSecond = 60
+    }
+
+    /// A renderer without a view, for off-screen rendering (export).
+    init?(device: MTLDevice) {
+        guard let queue = device.makeCommandQueue(),
+              let lib = device.makeDefaultLibrary() else { return nil }
+        self.device = device
+        self.queue = queue
 
         let vd = MTLVertexDescriptor()
         vd.attributes[0].format = .float2
@@ -146,6 +151,14 @@ final class Renderer: NSObject, MTKViewDelegate {
         return device.makeBuffer(length: max(bytes * 3 / 2, 256 << 10), options: .storageModeShared)
     }
 
+    /// What goes under the puppet: a checkerboard (two colours and a cell
+    /// size in pixels), a flat colour, or nothing (transparent).
+    struct Background {
+        var a: SIMD4<Float>
+        var b: SIMD4<Float>
+        var cell: Float
+    }
+
     func draw(in view: MTKView) {
         guard let source, let drawable = view.currentDrawable else { return }
         let now = CACurrentMediaTime()
@@ -158,8 +171,40 @@ final class Renderer: NSObject, MTKViewDelegate {
         guard let mainStencil else { return }
 
         let frame = source.renderFrame(deltaTime: dt, viewSize: CGSize(width: w, height: h))
-
         inFlight.wait()
+        guard let cmd = queue.makeCommandBuffer() else { inFlight.signal(); return }
+        let sem = inFlight
+        cmd.addCompletedHandler { _ in sem.signal() }
+
+        let bg = source.background
+        let custom = source.backgroundColor
+        let background = bg.isChecker
+            ? Background(a: SIMD4(0.80, 0.80, 0.82, 1), b: SIMD4(0.92, 0.92, 0.94, 1), cell: Float(24 * view.contentScaleFactor))
+            : Background(a: custom ?? bg.color, b: custom ?? bg.color, cell: 64)
+        encode(cmd, frame: frame, color: drawable.texture, stencil: mainStencil, width: w, height: h, background: background)
+        cmd.present(drawable)
+        cmd.commit()
+    }
+
+    /// Renders one frame off screen and returns premultiplied RGBA8 rows (top first).
+    func renderImage(_ frame: RenderFrame, width w: Int, height h: Int, background: Background?) -> [UInt8]? {
+        let d = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .bgra8Unorm, width: w, height: h, mipmapped: false)
+        d.usage = [.renderTarget, .shaderRead]
+        d.storageMode = .shared
+        if layerPool.first.map({ $0.color.width != w || $0.color.height != h }) ?? false { layerPool = [] }
+        guard let color = device.makeTexture(descriptor: d), let stencil = stencilTexture(w, h),
+              let cmd = queue.makeCommandBuffer() else { return nil }
+        encode(cmd, frame: frame, color: color, stencil: stencil, width: w, height: h, background: background)
+        cmd.commit()
+        cmd.waitUntilCompleted()
+        var bgra = [UInt8](repeating: 0, count: w * h * 4)
+        bgra.withUnsafeMutableBytes { color.getBytes($0.baseAddress!, bytesPerRow: w * 4, from: MTLRegionMake2D(0, 0, w, h), mipmapLevel: 0) }
+        for i in stride(from: 0, to: bgra.count, by: 4) { bgra.swapAt(i, i + 2) }
+        return bgra
+    }
+
+    private func encode(_ cmd: MTLCommandBuffer, frame: RenderFrame?, color target: MTLTexture, stencil mainStencil: MTLTexture,
+                        width w: Int, height h: Int, background: Background?) {
         ringIndex = (ringIndex + 1) % ring.count
         var (vbuf, ibuf) = ring[ringIndex]
         if let list = frame?.list {
@@ -170,15 +215,11 @@ final class Renderer: NSObject, MTKViewDelegate {
             ring[ringIndex] = (vbuf, ibuf)
         }
 
-        guard let cmd = queue.makeCommandBuffer() else { inFlight.signal(); return }
-        let sem = inFlight
-        cmd.addCompletedHandler { _ in sem.signal() }
-
-        func pass(_ color: MTLTexture, _ stencil: MTLTexture, clear: Bool, clearColor: MTLClearColor) -> MTLRenderCommandEncoder? {
+        func pass(_ color: MTLTexture, _ stencil: MTLTexture, clear: Bool) -> MTLRenderCommandEncoder? {
             let rp = MTLRenderPassDescriptor()
             rp.colorAttachments[0].texture = color
             rp.colorAttachments[0].loadAction = clear ? .clear : .load
-            rp.colorAttachments[0].clearColor = clearColor
+            rp.colorAttachments[0].clearColor = MTLClearColor(red: 0, green: 0, blue: 0, alpha: 0)
             rp.colorAttachments[0].storeAction = .store
             rp.stencilAttachment.texture = stencil
             rp.stencilAttachment.loadAction = clear ? .clear : .load
@@ -190,14 +231,13 @@ final class Renderer: NSObject, MTKViewDelegate {
         // Like Inochi2D, draw the puppet onto a transparent canvas: blend
         // modes such as ClipToLower and DestinationIn depend on it. The
         // background goes underneath afterwards.
-        guard var enc = pass(drawable.texture, mainStencil, clear: true,
-                             clearColor: MTLClearColor(red: 0, green: 0, blue: 0, alpha: 0)) else { cmd.commit(); return }
+        guard var enc = pass(target, mainStencil, clear: true) else { return }
 
         if let frame, let vb = vbuf, let ib = ibuf {
             var mvp = frame.viewProjection
             let sampler = frame.preservePixels ? pointSampler : linearSampler
             var stencilMode = StencilMode.off
-            var stack: [(target: Target?, mode: StencilMode)] = [] // nil target = drawable
+            var stack: [(target: Target?, mode: StencilMode)] = [] // nil target = main target
             var current: Target? = nil
             var lastLayer: MTLTexture?
 
@@ -258,7 +298,7 @@ final class Renderer: NSObject, MTKViewDelegate {
                     stack.append((current, stencilMode))
                     current = t
                     stencilMode = .off
-                    guard let e = pass(t.color, t.stencil, clear: true, clearColor: MTLClearColor(red: 0, green: 0, blue: 0, alpha: 0)) else { cmd.commit(); return }
+                    guard let e = pass(t.color, t.stencil, clear: true) else { return }
                     enc = e
                     bindCommon(enc)
 
@@ -268,9 +308,9 @@ final class Renderer: NSObject, MTKViewDelegate {
                     lastLayer = current?.color
                     current = top.target
                     stencilMode = top.mode
-                    let color = current?.color ?? drawable.texture
+                    let color = current?.color ?? target
                     let stencil = current?.stencil ?? mainStencil
-                    guard let e = pass(color, stencil, clear: false, clearColor: MTLClearColor()) else { cmd.commit(); return }
+                    guard let e = pass(color, stencil, clear: false) else { return }
                     enc = e
                     bindCommon(enc)
 
@@ -288,15 +328,13 @@ final class Renderer: NSObject, MTKViewDelegate {
                 }
             }
         }
-        let bg = source.background
-        let custom = source.backgroundColor
-        enc.setRenderPipelineState(backgroundPipeline)
-        enc.setDepthStencilState(dsOff)
-        var colors: [SIMD4<Float>] = bg.isChecker
-            ? [SIMD4(0.80, 0.80, 0.82, 1), SIMD4(0.92, 0.92, 0.94, 1), SIMD4(Float(24 * view.contentScaleFactor), 0, 0, 0)]
-            : [custom ?? bg.color, custom ?? bg.color, SIMD4(64, 0, 0, 0)]
-        enc.setFragmentBytes(&colors, length: MemoryLayout<SIMD4<Float>>.stride * 3, index: 0)
-        enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
+        if let background {
+            enc.setRenderPipelineState(backgroundPipeline)
+            enc.setDepthStencilState(dsOff)
+            var colors: [SIMD4<Float>] = [background.a, background.b, SIMD4(background.cell, 0, 0, 0)]
+            enc.setFragmentBytes(&colors, length: MemoryLayout<SIMD4<Float>>.stride * 3, index: 0)
+            enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
+        }
 
         // Editor overlays (wireframes, handles), already in clip space.
         if let overlay = frame?.overlay, !overlay.isEmpty {
@@ -311,8 +349,6 @@ final class Renderer: NSObject, MTKViewDelegate {
             }
         }
         enc.endEncoding()
-        cmd.present(drawable)
-        cmd.commit()
     }
 }
 
