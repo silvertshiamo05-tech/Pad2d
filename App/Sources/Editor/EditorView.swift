@@ -30,22 +30,56 @@ struct EditorView: View {
     }
 
     var body: some View {
+        decorated
+            .fileExporter(isPresented: $exporting, document: exportDocument, contentType: exportType,
+                          defaultFilename: model.name) { result in
+                if case let .failure(error) = result { model.message = error.localizedDescription }
+            }
+            .fileImporter(isPresented: $addingImage, allowedContentTypes: [.png, .image], allowsMultipleSelection: true) { result in
+                guard case let .success(urls) = result else { return }
+                for url in urls { addImage(url) }
+            }
+            .navigationDestination(item: $playURL) { url in
+                StageView(url: url, canEdit: false)
+            }
+    }
+
+    private var messageShown: Binding<Bool> {
+        Binding(get: { model.message != nil }, set: { if !$0 { model.message = nil } })
+    }
+
+    private var decorated: some View {
+        layout
+            .navigationTitle(model.name + (model.dirty ? " •" : ""))
+            .navigationBarTitleDisplayMode(.inline)
+            .navigationBarBackButtonHidden(true)
+            .toolbar { toolbar }
+            .task { await start() }
+            .alert(model.message ?? "", isPresented: messageShown) {
+                Button("OK", role: .cancel) {}
+            }
+            .confirmationDialog("Save changes to \(model.name)?", isPresented: $confirmLeave, titleVisibility: .visible) {
+                leaveButtons
+            }
+    }
+
+    @ViewBuilder
+    private var leaveButtons: some View {
+        Button("Save") { Task { if await model.save() { dismiss() } } }
+        Button("Discard Changes", role: .destructive) { dismiss() }
+        Button("Cancel", role: .cancel) {}
+    }
+
+    private func start() async {
+        if let newPuppet { model.loadNew(newPuppet) } else { await model.load() }
+    }
+
+    private var ready: Bool { model.state == .ready }
+
+    private var layout: some View {
         HStack(spacing: 0) {
-            if showSidebar && model.state == .ready {
-                VStack(spacing: 0) {
-                    Picker("Panel", selection: $sidebarTab) {
-                        ForEach(SidebarTab.allCases) { Text($0.title).tag($0) }
-                    }
-                    .pickerStyle(.segmented)
-                    .padding(8)
-                    Divider()
-                    switch sidebarTab {
-                    case .nodes: NodeTreeView(model: model, addingImage: $addingImage)
-                    case .parameters: ParameterEditorList(model: model)
-                    }
-                }
-                .frame(width: 280)
-                .background(Color(.secondarySystemBackground))
+            if showSidebar && ready {
+                sidebar
                 Divider()
             }
             ZStack {
@@ -53,39 +87,30 @@ struct EditorView: View {
                     .ignoresSafeArea(edges: .bottom)
                 canvasOverlay
             }
-            if showInspector && model.state == .ready {
+            if showInspector && ready {
                 Divider()
                 InspectorView(model: model)
                     .frame(width: 310)
             }
         }
-        .navigationTitle(model.name + (model.dirty ? " •" : ""))
-        .navigationBarTitleDisplayMode(.inline)
-        .navigationBarBackButtonHidden(true)
-        .toolbar { toolbar }
-        .task {
-            if let newPuppet { model.loadNew(newPuppet) } else { await model.load() }
+    }
+
+    private var sidebar: some View {
+        VStack(spacing: 0) {
+            Picker("Panel", selection: $sidebarTab) {
+                ForEach(SidebarTab.allCases) { Text($0.title).tag($0) }
+            }
+            .pickerStyle(.segmented)
+            .padding(8)
+            Divider()
+            if sidebarTab == .nodes {
+                NodeTreeView(model: model, addingImage: $addingImage)
+            } else {
+                ParameterEditorList(model: model)
+            }
         }
-        .alert(model.message ?? "", isPresented: Binding(get: { model.message != nil },
-                                                         set: { if !$0 { model.message = nil } })) {
-            Button("OK", role: .cancel) {}
-        }
-        .confirmationDialog("Save changes to \(model.name)?", isPresented: $confirmLeave, titleVisibility: .visible) {
-            Button("Save") { Task { if await model.save() { dismiss() } } }
-            Button("Discard Changes", role: .destructive) { dismiss() }
-            Button("Cancel", role: .cancel) {}
-        }
-        .fileExporter(isPresented: $exporting, document: exportDocument, contentType: exportType,
-                      defaultFilename: model.name) { result in
-            if case let .failure(error) = result { model.message = error.localizedDescription }
-        }
-        .fileImporter(isPresented: $addingImage, allowedContentTypes: [.png, .image], allowsMultipleSelection: true) { result in
-            guard case let .success(urls) = result else { return }
-            for url in urls { addImage(url) }
-        }
-        .navigationDestination(item: $playURL) { url in
-            StageView(url: url, canEdit: false)
-        }
+        .frame(width: 280)
+        .background(Color(.secondarySystemBackground))
     }
 
     // MARK: Toolbar

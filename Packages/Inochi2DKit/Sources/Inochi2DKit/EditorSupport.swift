@@ -201,7 +201,7 @@ public extension Node {
     }
 }
 
-public extension Binding {
+public extension ParameterBinding {
     var owner: Parameter { parameter }
 }
 

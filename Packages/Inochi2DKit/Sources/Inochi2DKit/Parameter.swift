@@ -38,7 +38,7 @@ public final class Parameter {
     public internal(set) var lastInternal = Vec2(0, 0)
     var mergeMode = ParamMergeMode.passthrough
     var axisPoints: [[Float]] = [[0, 1], [0, 1]]
-    var bindings: [Binding] = []
+    var bindings: [ParameterBinding] = []
 
     var extraJSON: [String: Any] = [:]
 
@@ -67,7 +67,7 @@ public final class Parameter {
         }
         for case let b as [String: Any] in json.array("bindings") ?? [] {
             guard let target = b.string("param_name") else { continue }
-            let binding: Binding? = target == "deform"
+            let binding: ParameterBinding? = target == "deform"
                 ? DeformBinding(parameter: self, json: b)
                 : ValueBinding(parameter: self, json: b)
             if let binding { bindings.append(binding) }
@@ -166,7 +166,7 @@ public final class Parameter {
 
 // MARK: - Bindings
 
-public class Binding {
+public class ParameterBinding {
     unowned let parameter: Parameter
     var nodeRef: UInt32
     /// What the binding drives: "deform", "transform.t.x", "opacity", ...
@@ -254,7 +254,7 @@ public class Binding {
     }
 }
 
-final class ValueBinding: Binding {
+final class ValueBinding: ParameterBinding {
     var values: [[Float]]
 
     override init(parameter: Parameter, node: Node, target: String) {
@@ -287,7 +287,7 @@ final class ValueBinding: Binding {
     }
 }
 
-final class DeformBinding: Binding {
+final class DeformBinding: ParameterBinding {
     var values: [[[Vec2]]]
 
     override init(parameter: Parameter, node: Node, target: String) {

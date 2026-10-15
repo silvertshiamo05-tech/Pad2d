@@ -126,63 +126,88 @@ private struct KeypointPad: View {
     let parameter: Parameter
     let armed: Bool
 
+    private var inset: CGFloat { 10 }
+
+    private func pos(_ x: CGFloat, _ y: CGFloat, _ size: CGSize) -> CGPoint {
+        CGPoint(x: inset + x * (size.width - 2 * inset), y: inset + (1 - y) * (size.height - 2 * inset))
+    }
+
+    private var xs: [Float] { parameter.axisKeypoints[0] }
+    private var ys: [Float] { parameter.isVec2 ? parameter.axisKeypoints[1] : [0.5] }
+
+    private func grid(_ size: CGSize) -> Path {
+        Path { p in
+            for x in xs {
+                p.move(to: pos(CGFloat(x), 0, size))
+                p.addLine(to: pos(CGFloat(x), 1, size))
+            }
+            for y in ys {
+                p.move(to: pos(0, CGFloat(y), size))
+                p.addLine(to: pos(1, CGFloat(y), size))
+            }
+        }
+    }
+
+    private struct Dot: Identifiable {
+        let id: Int
+        let point: CGPoint
+        let filled: Bool
+    }
+
+    private func dots(_ size: CGSize) -> [Dot] {
+        let set = recordedKeypoints()
+        var out: [Dot] = []
+        for i in xs.indices {
+            for j in ys.indices {
+                let k = Keypoint(i, parameter.isVec2 ? j : 0)
+                out.append(Dot(id: i * 1000 + j, point: pos(CGFloat(xs[i]), CGFloat(ys[j]), size), filled: set.contains(k)))
+            }
+        }
+        return out
+    }
+
+    private func knob(_ size: CGSize) -> CGPoint {
+        let n = parameter.normalizedValue
+        let nx = n.x.isFinite ? CGFloat(n.x) : 0.5
+        let ny: CGFloat = parameter.isVec2 ? (n.y.isFinite ? CGFloat(n.y) : 0.5) : 0.5
+        return pos(nx, ny, size)
+    }
+
+    private func drag(_ location: CGPoint, _ size: CGSize) {
+        let x = Float(max(0, min(1, (location.x - inset) / (size.width - 2 * inset))))
+        let y = Float(max(0, min(1, 1 - (location.y - inset) / (size.height - 2 * inset))))
+        parameter.normalizedValue = Vec2(x, parameter.isVec2 ? y : 0)
+        model.setValue(parameter, parameter.value)
+    }
+
     var body: some View {
         GeometryReader { geo in
-            let w = geo.size.width, h = geo.size.height
-            let inset: CGFloat = 10
-            let xs = parameter.axisKeypoints[0], ys = parameter.isVec2 ? parameter.axisKeypoints[1] : [0.5]
-            let n = parameter.normalizedValue
-            let nx = n.x.isFinite ? CGFloat(n.x) : 0.5
-            let ny = parameter.isVec2 ? (n.y.isFinite ? CGFloat(n.y) : 0.5) : 0.5
-            let set = recordedKeypoints()
-            let pos = { (x: CGFloat, y: CGFloat) in
-                CGPoint(x: inset + x * (w - 2 * inset), y: inset + (1 - y) * (h - 2 * inset))
-            }
-            ZStack {
-                RoundedRectangle(cornerRadius: 8).fill(.quaternary)
-                Path { p in
-                    for x in xs {
-                        p.move(to: pos(CGFloat(x), 0))
-                        p.addLine(to: pos(CGFloat(x), 1))
-                    }
-                    if parameter.isVec2 {
-                        for y in ys {
-                            p.move(to: pos(0, CGFloat(y)))
-                            p.addLine(to: pos(1, CGFloat(y)))
-                        }
-                    } else {
-                        p.move(to: pos(0, 0.5))
-                        p.addLine(to: pos(1, 0.5))
-                    }
-                }
-                .stroke(.secondary.opacity(0.35), lineWidth: 1)
-                ForEach(xs.indices, id: \.self) { i in
-                    ForEach(ys.indices, id: \.self) { j in
-                        let filled = set.contains(Keypoint(i, parameter.isVec2 ? j : 0))
-                        Circle()
-                            .fill(filled ? Color.red : Color.secondary.opacity(0.5))
-                            .frame(width: filled ? 9 : 6, height: filled ? 9 : 6)
-                            .position(pos(CGFloat(xs[i]), parameter.isVec2 ? CGFloat(ys[j]) : 0.5))
-                    }
-                }
-                Circle()
-                    .strokeBorder(.white, lineWidth: 2)
-                    .background(Circle().fill(armed ? Color.red : Color.accentColor))
-                    .frame(width: 18, height: 18)
-                    .position(pos(nx, ny))
-            }
-            .contentShape(Rectangle())
-            .gesture(DragGesture(minimumDistance: 0)
-                .onChanged { g in
-                    let x = Float(max(0, min(1, (g.location.x - inset) / (w - 2 * inset))))
-                    let y = Float(max(0, min(1, 1 - (g.location.y - inset) / (h - 2 * inset))))
-                    parameter.normalizedValue = Vec2(x, parameter.isVec2 ? y : 0)
-                    model.setValue(parameter, parameter.value)
-                }
-                .onEnded { _ in
-                    if armed { model.goTo(parameter, parameter.nearestKeypoint) }
-                })
+            pad(geo.size)
         }
+    }
+
+    private func pad(_ size: CGSize) -> some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 8).fill(.quaternary)
+            grid(size).stroke(Color.secondary.opacity(0.35), lineWidth: 1)
+            ForEach(dots(size)) { d in
+                Circle()
+                    .fill(d.filled ? Color.red : Color.secondary.opacity(0.5))
+                    .frame(width: d.filled ? 9 : 6, height: d.filled ? 9 : 6)
+                    .position(d.point)
+            }
+            Circle()
+                .strokeBorder(Color.white, lineWidth: 2)
+                .background(Circle().fill(armed ? Color.red : Color.accentColor))
+                .frame(width: 18, height: 18)
+                .position(knob(size))
+        }
+        .contentShape(Rectangle())
+        .gesture(DragGesture(minimumDistance: 0)
+            .onChanged { g in drag(g.location, size) }
+            .onEnded { _ in
+                if armed { model.goTo(parameter, parameter.nearestKeypoint) }
+            })
     }
 
     private func recordedKeypoints() -> Set<Keypoint> {

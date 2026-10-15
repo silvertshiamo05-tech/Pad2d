@@ -34,7 +34,7 @@ extension Parameter {
     /// Keypoint positions along each axis, normalised 0...1.
     public var axisKeypoints: [[Float]] { axisPoints }
 
-    public var allBindings: [Binding] { bindings }
+    public var allBindings: [ParameterBinding] { bindings }
 
     /// The parameter value at a keypoint.
     public func value(at k: Keypoint) -> Vec2 {
@@ -60,7 +60,7 @@ extension Parameter {
     }
 }
 
-extension Binding {
+extension ParameterBinding {
     public func isSet(_ k: Keypoint) -> Bool {
         k.x < isSet.count && k.y < isSet[k.x].count && isSet[k.x][k.y]
     }
@@ -366,7 +366,7 @@ public extension Puppet {
 
     // MARK: Bindings
 
-    func binding(_ p: Parameter, node: Node, target: String) -> Binding? {
+    func binding(_ p: Parameter, node: Node, target: String) -> ParameterBinding? {
         p.bindings.first { $0.node === node && $0.target == target }
     }
 
@@ -418,7 +418,7 @@ public extension Puppet {
     }
 
     /// Clears a keypoint of a binding; the binding goes away when nothing is set.
-    func unset(_ b: Binding, at k: Keypoint) {
+    func unset(_ b: ParameterBinding, at k: Keypoint) {
         guard b.isSet(k) else { return }
         b.isSet[k.x][k.y] = false
         if !b.isSet.contains(where: { $0.contains(true) }) {
@@ -437,7 +437,7 @@ public extension Puppet {
 
     /// Like Inochi Creator's createBinding: a keypoint sitting exactly at
     /// value 0 starts out set to the rest pose.
-    private func setRest(_ b: Binding) {
+    private func setRest(_ b: ParameterBinding) {
         let p = b.parameter
         var best: Keypoint?
         var bestDistance = Float.infinity
@@ -454,12 +454,12 @@ public extension Puppet {
         b.isSet[k.x][k.y] = true
     }
 
-    func removeBinding(_ b: Binding) {
+    func removeBinding(_ b: ParameterBinding) {
         b.parameter.bindings.removeAll { $0 === b }
     }
 
     /// Bindings that affect a node.
-    func bindings(for node: Node) -> [(Parameter, Binding)] {
+    func bindings(for node: Node) -> [(Parameter, ParameterBinding)] {
         parameters.flatMap { p in p.bindings.filter { $0.node === node }.map { (p, $0) } }
     }
 }
