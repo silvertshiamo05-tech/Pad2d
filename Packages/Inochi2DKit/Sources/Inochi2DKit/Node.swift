@@ -81,7 +81,7 @@ public class Node {
         return localTransform.calcOffset(offsetTransform)
     }
 
-    func transformChanged() {
+    public func transformChanged() {
         recalculateTransform = true
         for c in children { c.transformChanged() }
     }

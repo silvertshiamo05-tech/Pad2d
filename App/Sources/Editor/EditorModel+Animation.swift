@@ -6,7 +6,7 @@ extension EditorModel {
     // MARK: Animation
 
     var animationNames: [String] { (puppet?.animations.keys).map { $0.sorted() } ?? [] }
-    var currentAnim: Animation? { currentAnimation.flatMap { puppet?.animations[$0] } }
+    var currentAnim: PuppetAnimation? { currentAnimation.flatMap { puppet?.animations[$0] } }
     var playback: AnimationPlayback? { currentAnimation.flatMap { player?.playback($0) } }
 
     func startAnimationMode() {
@@ -149,7 +149,7 @@ extension EditorModel {
         changed("Delete lane")
     }
 
-    func saveAnimation(oldName: String?, name: String, anim: Animation) -> String? {
+    func saveAnimation(oldName: String?, name: String, anim: PuppetAnimation) -> String? {
         guard let puppet else { return nil }
         let n = name.trimmingCharacters(in: .whitespaces)
         if n.isEmpty { return "Name can not be empty!" }
@@ -254,3 +254,6 @@ struct TrackingBinding: Codable, Identifiable, Hashable {
     var axis: Int
     var inverse: Bool
 }
+
+/// Inochi2D's animation type (SwiftUI also declares `Animation`).
+typealias PuppetAnimation = Inochi2DKit.Animation

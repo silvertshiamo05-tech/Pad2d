@@ -134,13 +134,13 @@ struct NodeTreeView: View {
     }
 
     private func addMenu<L: View>(under parent: Node?, @ViewBuilder label: () -> L) -> some View {
-        Menu {
+        Menu(content: {
             Button { if let p = parent { model.select(p) }; addingImage = true } label: { Label("Part from Image…", systemImage: "photo.badge.plus") }
             Divider()
             ForEach([NodeKind.node, .composite, .physics, .camera, .meshGroup], id: \.self) { kind in
                 Button { model.add(kind, under: parent) } label: { Label(kind.title, systemImage: icon(kind)) }
             }
-        } label: label
+        }, label: label)
     }
 
     private func icon(_ kind: NodeKind) -> String {

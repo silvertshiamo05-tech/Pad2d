@@ -55,14 +55,14 @@ public final class Parameter {
     public internal(set) var isVec2 = false
     public internal(set) var min = Vec2(0, 0)
     public internal(set) var max = Vec2(1, 1)
-    public internal(set) var defaults = Vec2(0, 0)
+    public var defaults = Vec2(0, 0)
     public var value = Vec2(0, 0)
     public internal(set) var lastInternal = Vec2(0, 0)
     public var mergeMode = ParamMergeMode.additive
     /// The parameter group (Inochi Creator) this parameter is in.
     public var groupUUID: UInt32?
     var axisPoints: [[Float]] = [[0, 1], [0, 1]]
-    var bindings: [ParameterBinding] = []
+    public var bindings: [ParameterBinding] = []
 
     var extraJSON: [String: Any] = [:]
 

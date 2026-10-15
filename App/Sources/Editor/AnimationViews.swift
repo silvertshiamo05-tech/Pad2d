@@ -167,7 +167,7 @@ struct TimelineView: View {
         .padding(.horizontal, 8)
     }
 
-    private func ruler(_ anim: Animation) -> some View {
+    private func ruler(_ anim: PuppetAnimation) -> some View {
         Canvas { ctx, size in
             for f in stride(from: 0, through: anim.length, by: 1) {
                 let x = CGFloat(f) * frameWidth + 10
@@ -190,7 +190,7 @@ struct TimelineView: View {
         })
     }
 
-    private func laneTrack(_ lane: AnimationLane, _ anim: Animation) -> some View {
+    private func laneTrack(_ lane: AnimationLane, _ anim: PuppetAnimation) -> some View {
         GeometryReader { geo in
             let h = geo.size.height
             Canvas { ctx, size in
@@ -325,7 +325,7 @@ struct EditAnimationSheet: View {
     }
 
     private func save() {
-        let a = name.flatMap { model.puppet?.animations[$0] } ?? Animation()
+        let a = name.flatMap { model.puppet?.animations[$0] } ?? PuppetAnimation()
         a.additive = additive
         a.weight = weight
         a.length = length

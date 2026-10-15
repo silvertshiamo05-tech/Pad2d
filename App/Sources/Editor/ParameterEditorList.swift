@@ -452,8 +452,16 @@ private struct ParameterPropertiesSheet: View {
     let parameter: Parameter
     @Environment(\.dismiss) private var dismiss
     @State private var name = ""
-    @State private var minX: Float = 0, maxX: Float = 1, minY: Float = 0, maxY: Float = 1
+    @State private var minX: Float = 0
+    @State private var maxX: Float = 1
+    @State private var minY: Float = 0
+    @State private var maxY: Float = 1
     @State private var error: String?
+
+    init(model: EditorModel, parameter: Parameter) {
+        self.model = model
+        self.parameter = parameter
+    }
 
     var body: some View {
         NavigationStack {
