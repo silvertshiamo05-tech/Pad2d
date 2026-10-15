@@ -167,3 +167,88 @@ final class BindingOpsTests: XCTestCase {
         XCTAssertEqual(two.binding(node: left, target: "transform.t.x")?.floatValue(Keypoint(2, 0)), 5)
     }
 }
+
+final class MeshEditingTests: XCTestCase {
+    func testTrianglesFromEdges() {
+        // A square with a centre vertex connected to all corners: 4 faces, and
+        // the outer triangles formed by the square's edges + diagonal-free
+        // ring aren't produced.
+        var m = EditableMesh(points: [Vec2(0, 0), Vec2(10, 0), Vec2(10, 10), Vec2(0, 10), Vec2(5, 5)])
+        for i in 0..<4 { m.connect(i, (i + 1) % 4); m.connect(i, 4) }
+        XCTAssertEqual(m.triangleCount, 4)
+        // Adding a diagonal creates triangles that enclose the centre: rejected.
+        m.connect(0, 2)
+        XCTAssertEqual(m.triangleCount, 4)
+        m.remove(4)
+        XCTAssertEqual(m.triangleCount, 2)
+    }
+
+    func testGridAndLasso() {
+        let g = EditableMesh.grid([[0, 5, 10], [0, 10, 20]])
+        XCTAssertEqual(g.points.count, 9)
+        XCTAssertEqual(g.exportIndices().count, 8 * 3)
+        XCTAssertTrue(g.isGrid)
+        let inside = g.vertices(inPolygon: [Vec2(-1, -1), Vec2(11, -1), Vec2(11, 11), Vec2(-1, 11)])
+        XCTAssertEqual(Set(inside), [0, 1, 3, 4, 6, 7])
+    }
+
+    func testContourAutoMeshOnDisc() {
+        let w = 128, h = 128
+        let alpha: (Int, Int) -> UInt8 = { x, y in pow(Float(x - 64), 2) + pow(Float(y - 64), 2) < 1600 ? 255 : 0 }
+        let pts = ContourAutoMesh.preset(.normal).points(alpha: alpha, width: w, height: h)
+        XCTAssertGreaterThan(pts.count, 6)
+        // Outer ring is ~1.1 × radius 40 from the centre.
+        let far = pts.map { $0.distance(to: Vec2(64, 64)) }.max()!
+        XCTAssertGreaterThan(far, 40)
+        XCTAssertLessThan(far, 50)
+        var m = EditableMesh(points: pts)
+        m.triangulate()
+        XCTAssertGreaterThan(m.triangleCount, 4)
+    }
+
+    func testApplyMeshKeepsDeformation() throws {
+        let (puppet, left, _, p) = makePair()
+        let offsets = left.vertices.map { _ in Vec2(0, 5) }
+        puppet.setDeformation(p, left, at: Keypoint(2, 0), offsets: offsets)
+        var m = EditableMesh(left)
+        let c = m.add(Vec2(0, 0))
+        for i in 0..<4 { m.connect(i, c) }
+        XCTAssertTrue(puppet.applyMesh(m, to: left))
+        XCTAssertEqual(left.vertices.count, 5)
+        let d = puppet.deformation(p, left, at: Keypoint(2, 0))
+        for o in d { XCTAssertEqual(o.y, 5, accuracy: 1e-3) }
+    }
+}
+
+final class SplineTests: XCTestCase {
+    func testEvalAndClosest() {
+        let s = CatmullSpline(points: [Vec2(0, 0), Vec2(100, 0), Vec2(200, 0), Vec2(300, 0)])
+        XCTAssertEqual(s.eval(1.5).x, 150, accuracy: 1)
+        XCTAssertEqual(s.eval(1.5).y, 0, accuracy: 1e-3)
+        XCTAssertEqual(s.closestOffset(to: Vec2(150, 40)), 1.5, accuracy: 0.02)
+    }
+
+    func testPathBendsVertices() {
+        let ref = CatmullSpline(points: [Vec2(0, 0), Vec2(100, 0), Vec2(200, 0)])
+        var target = ref
+        var b = PathBinding()
+        let verts = [Vec2(50, 10), Vec2(150, -10), Vec2(-50, 0)]
+        b.map(verts, reference: ref, target: target)
+        // Unmoved path keeps vertices in place; vertices past the ends aren't bound.
+        let same = b.positions(target: target)
+        XCTAssertEqual(same[0]!.distance(to: verts[0]), 0, accuracy: 0.5)
+        XCTAssertNil(same[2])
+        // Shifting the whole path moves the vertices with it.
+        target.points = target.points.map { $0 + Vec2(0, 30) }
+        target.interpolate()
+        let moved = b.positions(target: target)
+        XCTAssertEqual(moved[0]!.y, 40, accuracy: 0.5)
+        XCTAssertEqual(moved[1]!.y, 20, accuracy: 0.5)
+    }
+
+    func testBrushes() {
+        XCTAssertEqual(DeformBrush.circle(radius: 100).weight(Vec2(50, 0)), 0.5, accuracy: 1e-5)
+        XCTAssertEqual(DeformBrush.doubleThreshold(radius: 100, inner: 50).weight(Vec2(40, 0)), 1)
+        XCTAssertEqual(DeformBrush.rectangle(width: 100, height: 50).weight(Vec2(0, 25)), 0.5, accuracy: 1e-5)
+    }
+}
