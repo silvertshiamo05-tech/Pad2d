@@ -92,6 +92,18 @@ rigcheck "turn -0.5,0.9" params "Head:: Yaw-Pitch" -0.5,0.9
 FRAMES=120 rigcheck physics physics "Head:: Yaw-Pitch" 1,0.5
 for f in 1 10 17 29 45; do FRAMES=$f rigcheck "animation frame $f" anim Turn; done
 
+# Exporting: Creator-style .inp export with texture atlases must draw the
+# same geometry in the original runtime; pixels are compared further below.
+for m in Aka Midori; do
+  "$port" "$models/$m.inx" export "build/$m-export.inp" 2>/dev/null
+  for mode in rest params; do
+    "$ref" "build/$m-export.inp" $mode > build/ref.txt
+    "$port" "$models/$m.inx" $mode > build/port.txt
+    python3 compare.py build/ref.txt build/port.txt "$m exported, $mode" | tee -a build/report.txt
+    grep -q "mismatched=0 " <(tail -1 build/report.txt) || status=1
+  done
+done
+
 # Pixels: Inochi2D's own OpenGL renderer (headless Mesa) vs the port's renderer.
 # Run at roughly a quarter of the iPad's screen size to keep CI fast.
 glref=glreference/inochi2d-glreference
@@ -110,4 +122,13 @@ render Aka 300 900 0.5
 render Midori -120 -1500 0.9
 render Midori -347 163 0.5
 render Midori -300 1000 0.6
+# Exported atlases vs the original textures, both drawn by Inochi2D's renderer
+# (close up; when zoomed far out, mipmaps of an atlas differ by design).
+for v in "Aka 120 -1650 0.9" "Midori -120 -1500 0.9"; do
+  set -- $v
+  XDG_SESSION_TYPE=wayland "$glref" "$models/$1.inx" build/a.rgba 600 1000 "$2" "$3" "$4" 2>/dev/null
+  XDG_SESSION_TYPE=wayland "$glref" "build/$1-export.inp" build/b.rgba 600 1000 "$2" "$3" "$4" 2>/dev/null
+  python3 compare_images.py build/a.rgba build/b.rgba 600 1000 "$1 exported pixels" || status=1
+done
+
 exit $status

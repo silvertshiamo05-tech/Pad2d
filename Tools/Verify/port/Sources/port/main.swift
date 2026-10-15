@@ -10,6 +10,19 @@ if args.count > 3 && args[2] == "save" {
     try p.fileData().write(to: URL(fileURLWithPath: args[3]))
     exit(0)
 }
+if args.count > 3 && args[2] == "export" {
+    // export <model> export <out.inp>: Creator-style INP export with atlases.
+    let p = try Puppet(contentsOf: URL(fileURLWithPath: args[1]))
+    var settings = INPExportSettings()
+    settings.atlasResolution = 4096
+    settings.pruneHidden = false
+    let r = try p.exportINP(settings) { blob in
+        (try? TGADecoder.decode(blob.data)).map { ($0.rgba, $0.width, $0.height) }
+    }
+    try r.data.write(to: URL(fileURLWithPath: args[3]))
+    FileHandle.standardError.write("atlases: \(r.atlasCount) scale: \(r.forcedScale)\n".data(using: .utf8)!)
+    exit(0)
+}
 if args.count > 3 && args[2] == "rig" {
     // - rig <out.inx>: build and rig a puppet from scratch with the editing API.
     try buildRig().fileData().write(to: URL(fileURLWithPath: args[3]))

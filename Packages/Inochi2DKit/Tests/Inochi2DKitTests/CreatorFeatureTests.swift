@@ -252,3 +252,55 @@ final class SplineTests: XCTestCase {
         XCTAssertEqual(DeformBrush.rectangle(width: 100, height: 50).weight(Vec2(0, 25)), 0.5, accuracy: 1e-5)
     }
 }
+
+final class ToolsTests: XCTestCase {
+    func testColorBleed() {
+        // 3x1: red opaque, then two transparent pixels.
+        var px: [UInt8] = [255, 0, 0, 255, 0, 0, 0, 0, 0, 0, 0, 0]
+        colorBleed(&px, width: 3, height: 1)
+        XCTAssertEqual(Array(px[4..<8]), [255, 0, 0, 0])
+        XCTAssertEqual(Array(px[8..<12]), [255, 0, 0, 0])
+    }
+
+    func testRegenerateIDsKeepsLinks() throws {
+        let (puppet, left, right, p) = makePair()
+        puppet.setMasks(right, sources: [(left.uuid, .mask)])
+        puppet.setValue(p, left, target: "transform.t.x", at: Keypoint(2, 0), value: 3)
+        puppet.flipPairs = [FlipPair(left.uuid, right.uuid)]
+        let oldLeft = left.uuid
+        puppet.regenerateNodeIDs()
+        XCTAssertNotEqual(left.uuid, oldLeft)
+        XCTAssertEqual(right.masks.first?.sourceID, left.uuid)
+        XCTAssertTrue(p.binding(node: left, target: "transform.t.x") != nil)
+        XCTAssertTrue(puppet.flipPartner(of: left) === right)
+        let r = try Puppet(data: puppet.fileData())
+        XCTAssertEqual(r.parameters.first?.bindingCount, 1)
+    }
+}
+
+final class ExportTests: XCTestCase {
+    func testPackerAndAtlasExport() throws {
+        var packer = MaxRectsPacker(width: 100, height: 100)
+        XCTAssertNotNil(packer.pack(60, 60))
+        XCTAssertNotNil(packer.pack(40, 100))
+        XCTAssertNil(packer.pack(50, 50))
+
+        let (puppet, left, right, _) = makePair()
+        right.enabled = false
+        let cam = puppet.makeNode(.camera, name: "Cam")
+        puppet.add(cam, to: puppet.root)
+        var s = INPExportSettings()
+        s.atlasResolution = 256
+        s.padding = 4
+        let r = try puppet.exportINP(s) { blob in
+            (try? TGADecoder.decode(blob.data)).map { ($0.rgba, $0.width, $0.height) }
+        }
+        let out = try Puppet(data: r.data)
+        XCTAssertEqual(out.textures.count, 1)
+        XCTAssertEqual(out.parts.map(\.name), [left.name]) // hidden part pruned
+        XCTAssertFalse(out.root.allNodes().contains { $0 is Camera })
+        let uv = out.parts[0].uvs
+        XCTAssertTrue(uv.allSatisfy { $0.x >= 0 && $0.x <= 1 && $0.y >= 0 && $0.y <= 1 })
+        XCTAssertGreaterThan(uv.map(\.x).min()!, 0) // padded
+    }
+}

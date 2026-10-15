@@ -189,6 +189,14 @@ public extension ParameterBinding {
     }
 }
 
+public enum ParameterPreset: String, CaseIterable, Sendable {
+    case oneD = "Add 1D Parameter (0..1)"
+    case oneDCentered = "Add 1D Parameter (-1..1)"
+    case twoD = "Add 2D Parameter (0..1)"
+    case twoDCentered = "Add 2D Parameter (-1..+1)"
+    case mouth = "Add Mouth Shape"
+}
+
 public extension Parameter {
     /// Normalised position of a keypoint.
     func keypointOffset(_ k: Keypoint) -> Vec2 {
@@ -246,9 +254,9 @@ public extension Parameter {
 public extension Puppet {
     func parameter(uuid: UInt32) -> Parameter? { parameters.first { $0.uuid == uuid } }
 
-    /// Copies a parameter with all its bindings (named "… (Copy)").
-    @discardableResult
-    func duplicateParameter(_ p: Parameter) -> Parameter {
+    /// A copy of a parameter with all its bindings, not added to the puppet
+    /// (used for Creator's parameter clipboard).
+    func detachedCopy(_ p: Parameter) -> Parameter {
         let n = Parameter(json: [:])
         n.uuid = newUUID()
         n.name = p.name + " (Copy)"
@@ -269,10 +277,42 @@ public extension Puppet {
             n.bindings.append(c)
             for k in p.keypoints { b.copyKeypoint(k, to: c, at: k) }
         }
+        return n
+    }
+
+    /// Copies a parameter with all its bindings (named "… (Copy)") right after it.
+    @discardableResult
+    func duplicateParameter(_ p: Parameter) -> Parameter {
+        let n = detachedCopy(p)
         let i = (parameters.firstIndex { $0 === p } ?? parameters.count - 1) + 1
         parameters.insert(n, at: i)
         scanParts()
         return n
+    }
+
+    /// Creates a parameter from one of Inochi Creator's presets.
+    @discardableResult
+    func addPresetParameter(_ preset: ParameterPreset) -> Parameter {
+        let n = parameters.count
+        let p: Parameter
+        switch preset {
+        case .oneD:
+            p = createParameter(name: "Param #\(n)", isVec2: false, min: Vec2(0, 0), max: Vec2(1, 1))
+        case .oneDCentered:
+            p = createParameter(name: "Param #\(n)", isVec2: false, min: Vec2(-1, 0), max: Vec2(1, 1))
+            addKeypoint(p, axis: 0, at: 0.5)
+        case .twoD:
+            p = createParameter(name: "Param #\(n)", isVec2: true, min: Vec2(0, 0), max: Vec2(1, 1))
+        case .twoDCentered:
+            p = createParameter(name: "Param #\(n)", isVec2: true, min: Vec2(-1, -1), max: Vec2(1, 1))
+            addKeypoint(p, axis: 0, at: 0.5)
+            addKeypoint(p, axis: 1, at: 0.5)
+        case .mouth:
+            p = createParameter(name: "Mouth #\(n)", isVec2: true, min: Vec2(-1, 0), max: Vec2(1, 1))
+            for x: Float in [0.25, 0.5, 0.6] { addKeypoint(p, axis: 0, at: x) }
+            for y: Float in [0.3, 0.5, 0.6] { addKeypoint(p, axis: 1, at: y) }
+        }
+        return p
     }
 
     /// Turns a 1D parameter into a 2D one (same UUID); values go to the first row.

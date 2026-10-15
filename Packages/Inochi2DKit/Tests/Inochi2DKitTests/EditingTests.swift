@@ -308,3 +308,23 @@ final class DuplicateTests: XCTestCase {
         XCTAssertEqual(reloaded.parameters.first?.bindingCount, 2)
     }
 }
+
+final class PSDMergeTests: XCTestCase {
+    func testMergeMatchesByPathAndAddsNew() throws {
+        var options = PSDImportOptions()
+        options.autoMesh = false
+        let puppet = try Puppet.importPSD(makePSD(), options: options)
+        let eye = try XCTUnwrap(puppet.parts.first { $0.name == "Eye" })
+        eye.name = "Renamed Eye"
+        let doc = try PSDDocument(data: makePSD())
+        var plan = puppet.psdMergePlan(doc)
+        XCTAssertEqual(plan.count, 2)
+        XCTAssertEqual(plan.first { $0.name == "Eye" }?.target, eye.uuid)
+        // Treat Face as new.
+        if let i = plan.firstIndex(where: { $0.name == "Face" }) { plan[i].target = nil }
+        try puppet.applyPSDMerge(doc, items: plan, rename: true, retranslate: true)
+        XCTAssertEqual(eye.name, "Eye")
+        XCTAssertEqual(puppet.parts.filter { $0.name == "Face" }.count, 2)
+        _ = try Puppet(data: puppet.fileData())
+    }
+}

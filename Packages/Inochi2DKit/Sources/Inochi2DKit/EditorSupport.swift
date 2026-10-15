@@ -260,3 +260,53 @@ public extension Puppet {
         rebuild()
     }
 }
+
+public extension Drawable {
+    /// Texture offset (Creator's Drawable "Texture Offset").
+    func setOrigin(_ o: Vec2) {
+        origin = o
+        meshEdited = true
+    }
+}
+
+public extension MeshGroup {
+    func setTranslateChildren(_ v: Bool) {
+        translateChildren = v
+        for c in children { setupChild(c) }
+    }
+
+    func setDynamic(_ v: Bool) {
+        guard v != dynamic else { return }
+        dynamic = v
+        invalidate()
+    }
+}
+
+public extension Puppet {
+    /// Sets texture slot `slot` (0 albedo, 1 emissive, 2 bump) of a part.
+    /// Pass nil to empty it (the albedo can't be removed).
+    func setTexture(_ part: Part, slot: Int, texture: Int?) {
+        guard (0..<3).contains(slot), slot > 0 || texture != nil else { return }
+        part.textureIDs[slot] = texture
+    }
+
+    /// Replaces a texture's data in place (premultiplied RGBA8).
+    func replaceTexture(_ index: Int, rgba: [UInt8], width: Int, height: Int) {
+        guard textures.indices.contains(index) else { return }
+        textures[index] = TextureBlob(encoding: .tga, data: TGAEncoder.encode(rgba: rgba, width: width, height: height))
+    }
+
+    /// Removes textures no part uses, renumbering the parts' slots.
+    func pruneTextures() {
+        var used = Set<Int>()
+        for p in parts { for t in p.textureIDs.compactMap({ $0 }) { used.insert(t) } }
+        var map: [Int: Int] = [:]
+        var kept: [TextureBlob] = []
+        for (i, t) in textures.enumerated() where used.contains(i) {
+            map[i] = kept.count
+            kept.append(t)
+        }
+        textures = kept
+        for p in parts { p.textureIDs = p.textureIDs.map { $0.flatMap { map[$0] } } }
+    }
+}

@@ -2,8 +2,32 @@ import SwiftUI
 import UniformTypeIdentifiers
 import Inochi2DKit
 
-/// The puppet editor: node tree and parameters on the left, the canvas in
-/// the middle, the inspector on the right.
+/// Sheets the editor can show.
+enum EditorSheet: Identifiable {
+    case history, settings, autoMesh, flipPairs, testBinding
+    case editAnimation(String?)
+    case exportPuppet, exportImage, exportVideo
+    case textures, mergePSD(URL)
+
+    var id: String {
+        switch self {
+        case .history: return "history"
+        case .settings: return "settings"
+        case .autoMesh: return "automesh"
+        case .flipPairs: return "flip"
+        case .testBinding: return "testbinding"
+        case .editAnimation(let n): return "anim-\(n ?? "")"
+        case .exportPuppet: return "export-inp"
+        case .exportImage: return "export-image"
+        case .exportVideo: return "export-video"
+        case .textures: return "textures"
+        case .mergePSD(let u): return "merge-\(u.path)"
+        }
+    }
+}
+
+/// The puppet editor (Inochi Creator's main window): panels on the left,
+/// the canvas in the middle, the inspector or mode panel on the right.
 struct EditorView: View {
     @StateObject private var model: EditorModel
     @Environment(\.dismiss) private var dismiss
@@ -14,8 +38,11 @@ struct EditorView: View {
     @State private var exporting = false
     @State private var exportType = UTType.inochiCreatorProject
     @State private var addingImage = false
+    @State private var mergingPSD = false
     @State private var playURL: URL?
     @State private var confirmLeave = false
+    @State private var sheet: EditorSheet?
+    @State private var askRecovery = false
     private let newPuppet: Puppet?
 
     enum SidebarTab: String, CaseIterable, Identifiable {
@@ -35,9 +62,17 @@ struct EditorView: View {
                           defaultFilename: model.name) { result in
                 if case let .failure(error) = result { model.message = error.localizedDescription }
             }
-            .fileImporter(isPresented: $addingImage, allowedContentTypes: [.png, .image], allowsMultipleSelection: true) { result in
-                guard case let .success(urls) = result else { return }
-                for url in urls { addImage(url) }
+            .background {
+                Color.clear.fileImporter(isPresented: $addingImage, allowedContentTypes: [.png, .jpeg, .image],
+                                         allowsMultipleSelection: true) { result in
+                    guard case let .success(urls) = result else { return }
+                    for url in urls { addImage(url) }
+                }
+            }
+            .background {
+                Color.clear.fileImporter(isPresented: $mergingPSD, allowedContentTypes: [.photoshop, .photoshopLarge, .data]) { result in
+                    if case let .success(url) = result { sheet = .mergePSD(url) }
+                }
             }
             .navigationDestination(item: $playURL) { url in
                 StageView(url: url, canEdit: false)
@@ -46,6 +81,10 @@ struct EditorView: View {
 
     private var messageShown: Binding<Bool> {
         Binding(get: { model.message != nil }, set: { if !$0 { model.message = nil } })
+    }
+
+    private var pickShown: Binding<Bool> {
+        Binding(get: { !model.pickList.isEmpty }, set: { if !$0 { model.pickList = [] } })
     }
 
     private var decorated: some View {
@@ -61,55 +100,131 @@ struct EditorView: View {
             .confirmationDialog("Save changes to \(model.name)?", isPresented: $confirmLeave, titleVisibility: .visible) {
                 leaveButtons
             }
+            .confirmationDialog("Parts here", isPresented: pickShown, titleVisibility: .visible) {
+                pickButtons
+            }
+            .alert("Restore from backup?", isPresented: $askRecovery) {
+                Button("Restore") { Task { await restoreBackup() } }
+                Button("Discard", role: .destructive) { Autosave.releaseLock(model.saveURL) }
+            } message: {
+                Text("Pad2D closed unexpectedly while editing this file. Restore the latest autosave?")
+            }
+            .sheet(item: $sheet) { s in sheetView(s) }
     }
 
     @ViewBuilder
     private var leaveButtons: some View {
-        Button("Save") { Task { if await model.save() { dismiss() } } }
-        Button("Discard Changes", role: .destructive) { dismiss() }
+        Button("Save") { Task { if await model.save() { leave() } } }
+        Button("Discard Changes", role: .destructive) { leave() }
         Button("Cancel", role: .cancel) {}
     }
 
+    @ViewBuilder
+    private var pickButtons: some View {
+        ForEach(model.pickList, id: \.uuid) { part in
+            Button(part.name) { model.select(part, extend: model.shift) }
+        }
+        Button("Cancel", role: .cancel) {}
+    }
+
+    private func leave() {
+        Autosave.releaseLock(model.saveURL)
+        model.stopTest()
+        dismiss()
+    }
+
     private func start() async {
-        if let newPuppet { model.loadNew(newPuppet) } else { await model.load() }
+        if let newPuppet {
+            model.loadNew(newPuppet)
+        } else {
+            await model.load()
+            if Autosave.needsRecovery(model.saveURL) { askRecovery = true }
+        }
+        RecentProjects.add(model.url)
+    }
+
+    private func restoreBackup() async {
+        guard let latest = Autosave.backups(for: model.saveURL).last,
+              let data = try? Data(contentsOf: latest), let p = try? Puppet(data: data) else {
+            model.message = "The backup couldn't be read."
+            return
+        }
+        model.loadNew(p)
+    }
+
+    @ViewBuilder
+    private func sheetView(_ s: EditorSheet) -> some View {
+        switch s {
+        case .history: HistoryView(model: model)
+        case .settings: SettingsView(model: model)
+        case .autoMesh: AutoMeshSheet(model: model)
+        case .flipPairs: FlipPairsView(model: model)
+        case .testBinding: TrackingBindingSheet(model: model)
+        case .editAnimation(let name): EditAnimationSheet(model: model, name: name)
+        case .exportPuppet: PuppetExportSheet(model: model)
+        case .exportImage: ImageExportSheet(model: model)
+        case .exportVideo: VideoExportSheet(model: model)
+        case .textures: TextureViewer(model: model)
+        case .mergePSD(let url): PSDMergeSheet(model: model, url: url)
+        }
     }
 
     private var ready: Bool { model.state == .ready }
 
     private var layout: some View {
         HStack(spacing: 0) {
-            if showSidebar && ready {
+            if showSidebar && ready && model.mode != .mesh {
                 sidebar
                 Divider()
             }
-            ZStack {
-                EditorCanvas(model: model)
-                    .ignoresSafeArea(edges: .bottom)
-                canvasOverlay
+            VStack(spacing: 0) {
+                ZStack {
+                    EditorCanvas(model: model)
+                        .ignoresSafeArea(edges: .bottom)
+                    canvasOverlay
+                }
+                if model.mode == .animation && ready {
+                    Divider()
+                    TimelineView(model: model) { sheet = $0 }
+                        .frame(height: 260)
+                }
             }
             if showInspector && ready {
                 Divider()
-                InspectorView(model: model)
+                rightPanel
                     .frame(width: 310)
             }
         }
     }
 
+    @ViewBuilder
+    private var rightPanel: some View {
+        switch model.mode {
+        case .mesh: MeshOptionsView(model: model) { sheet = $0 }
+        case .test: TestPanel(model: model) { sheet = $0 }
+        default: InspectorView(model: model) { sheet = $0 }
+        }
+    }
+
     private var sidebar: some View {
         VStack(spacing: 0) {
-            Picker("Panel", selection: $sidebarTab) {
-                ForEach(SidebarTab.allCases) { Text($0.title).tag($0) }
-            }
-            .pickerStyle(.segmented)
-            .padding(8)
-            Divider()
-            if sidebarTab == .nodes {
-                NodeTreeView(model: model, addingImage: $addingImage)
+            if model.mode == .animation {
+                AnimationList(model: model) { sheet = $0 }
             } else {
-                ParameterEditorList(model: model)
+                Picker("Panel", selection: $sidebarTab) {
+                    ForEach(SidebarTab.allCases) { Text($0.title).tag($0) }
+                }
+                .pickerStyle(.segmented)
+                .padding(8)
+                Divider()
+                if sidebarTab == .nodes {
+                    NodeTreeView(model: model, addingImage: $addingImage)
+                } else {
+                    ParameterEditorList(model: model) { sheet = $0 }
+                }
             }
         }
-        .frame(width: 280)
+        .frame(width: 290)
         .background(Color(.secondarySystemBackground))
     }
 
@@ -119,51 +234,110 @@ struct EditorView: View {
     private var toolbar: some ToolbarContent {
         ToolbarItemGroup(placement: .topBarLeading) {
             Button {
-                if model.dirty { confirmLeave = true } else { dismiss() }
+                model.commitPending()
+                if model.dirty && AppSettings.saveOnClose == "Ask" { confirmLeave = true } else { leave() }
             } label: {
                 Label("Library", systemImage: "chevron.backward")
             }
             Button { withAnimation { showSidebar.toggle() } } label: { Image(systemName: "sidebar.left") }
-            Button { model.undo() } label: { Image(systemName: "arrow.uturn.backward") }
-                .disabled(!model.canUndo)
+            Button { undo() } label: { Image(systemName: "arrow.uturn.backward") }
+                .disabled(!(model.canUndo || (model.meshSession?.canUndo ?? false)))
                 .keyboardShortcut("z", modifiers: .command)
-            Button { model.redo() } label: { Image(systemName: "arrow.uturn.forward") }
-                .disabled(!model.canRedo)
+            Button { redo() } label: { Image(systemName: "arrow.uturn.forward") }
+                .disabled(!(model.canRedo || (model.meshSession?.canRedo ?? false)))
                 .keyboardShortcut("z", modifiers: [.command, .shift])
+            Button { sheet = .history } label: { Image(systemName: "clock.arrow.circlepath") }
         }
         ToolbarItem(placement: .principal) {
             Picker("Mode", selection: Binding(get: { model.mode }, set: { model.setMode($0) })) {
                 ForEach(EditorModel.Mode.allCases) { Text($0.title).tag($0) }
             }
             .pickerStyle(.segmented)
-            .frame(width: 180)
-            .disabled(model.state != .ready)
+            .frame(width: 320)
+            .disabled(!ready)
         }
         ToolbarItemGroup(placement: .topBarTrailing) {
             if model.saving { ProgressView() }
             Button { Task { _ = await model.save() } } label: { Image(systemName: "square.and.arrow.down") }
-                .disabled(model.state != .ready)
+                .disabled(!ready)
                 .keyboardShortcut("s", modifiers: .command)
-            Menu {
-                Button { export(.inochiCreatorProject) } label: { Label("Export Inochi Creator Project (.inx)", systemImage: "doc") }
-                Button { export(.inochiPuppet) } label: { Label("Export Puppet for Inochi Session (.inp)", systemImage: "person.crop.square") }
-                Divider()
-                Picker("Background", selection: $model.background) {
-                    ForEach(BackgroundStyle.allCases) { Text($0.title).tag($0) }
-                }
-                Button { model.resetView() } label: { Label("Reset View", systemImage: "viewfinder") }
-            } label: {
-                Image(systemName: "ellipsis.circle")
-            }
-            .disabled(model.state != .ready)
+            mainMenu
             Button {
                 Task { if await model.save() { playURL = model.url } }
             } label: {
                 Label("Play", systemImage: "play.fill")
             }
-            .disabled(model.state != .ready)
+            .disabled(!ready)
             Button { withAnimation { showInspector.toggle() } } label: { Image(systemName: "sidebar.right") }
         }
+    }
+
+    private func undo() {
+        if model.mode == .mesh, let s = model.meshSession, s.undo() {
+            model.revision &+= 1
+        } else {
+            model.undo()
+        }
+    }
+
+    private func redo() {
+        if model.mode == .mesh, let s = model.meshSession, s.redo() {
+            model.revision &+= 1
+        } else {
+            model.redo()
+        }
+    }
+
+    /// Creator's File / Edit / View / Tools menus, combined.
+    private var mainMenu: some View {
+        Menu {
+            Section("File") {
+                Button { export(.inochiCreatorProject) } label: { Label("Save a Copy (.inx)", systemImage: "doc.on.doc") }
+                Menu {
+                    Button { sheet = .exportPuppet } label: { Label("Inochi2D Puppet (.inp)…", systemImage: "person.crop.square") }
+                    Button { sheet = .exportImage } label: { Label("Image…", systemImage: "photo") }
+                    Button { sheet = .exportVideo } label: { Label("Video…", systemImage: "film") }
+                } label: { Label("Export", systemImage: "square.and.arrow.up") }
+                Menu {
+                    Button { mergingPSD = true } label: { Label("Photoshop Document…", systemImage: "square.3.layers.3d") }
+                    Button { addingImage = true } label: { Label("Image Files…", systemImage: "photo.on.rectangle") }
+                } label: { Label("Merge", systemImage: "arrow.triangle.merge") }
+            }
+            Section("Edit") {
+                Button { model.selectAll() } label: { Label("Select All", systemImage: "checkmark.circle") }
+                Button { sheet = .settings } label: { Label("Settings…", systemImage: "gearshape") }
+            }
+            Section("View") {
+                Picker("Background", selection: $model.background) {
+                    ForEach(BackgroundStyle.allCases) { Text($0.title).tag($0) }
+                }
+                Toggle("Mirror View", isOn: $model.mirrorView)
+                Toggle("Show Vertices", isOn: $model.showVertices)
+                Toggle("Show Bounds", isOn: $model.showBounds)
+                Toggle("Show Orientation", isOn: $model.showOrientation)
+                Toggle("Physics", isOn: $model.physicsPreview)
+                Button { model.puppet?.resetDrivers() } label: { Label("Reset Physics", systemImage: "arrow.counterclockwise") }
+                Button { model.resetParameters() } label: { Label("Reset Parameters", systemImage: "slider.horizontal.below.rectangle") }
+                Button { model.focusSelection() } label: { Label("Focus Selection", systemImage: "scope") }
+                Button { model.resetView() } label: { Label("Reset View", systemImage: "viewfinder") }
+            }
+            Section("Tools") {
+                Button { sheet = .flipPairs } label: { Label("Configure Flip Pairings…", systemImage: "arrow.left.and.right.square") }
+                Button { sheet = .textures } label: { Label("Texture Viewer…", systemImage: "photo.stack") }
+                Menu {
+                    Button("Premultiply Textures") { model.premultiplyTextures() }
+                    Button("Bleed Textures") { model.bleedTextures() }
+                    Button("Generate Fake Layer Names") { model.generateLayerNames() }
+                } label: { Label("Puppet Texturing", systemImage: "paintpalette") }
+                Menu {
+                    Button("Attempt Full Repair") { model.repairPuppet() }
+                    Button("Regenerate Node IDs") { model.regenerateNodeIDs() }
+                } label: { Label("Puppet Recovery", systemImage: "bandage") }
+            }
+        } label: {
+            Image(systemName: "ellipsis.circle")
+        }
+        .disabled(!ready)
     }
 
     private func export(_ type: UTType) {
@@ -177,11 +351,11 @@ struct EditorView: View {
         let scoped = url.startAccessingSecurityScopedResource()
         defer { if scoped { url.stopAccessingSecurityScopedResource() } }
         guard let data = try? Data(contentsOf: url), var (px, w, h) = TextureLoader.decodeImage(data) else {
-            model.message = "Couldn't read \(url.lastPathComponent)."
+            model.message = "\(url.lastPathComponent) is not supported."
             return
         }
         TGADecoder.premultiply(&px)
-        let limit = 4096
+        let limit = 8192
         if max(w, h) > limit {
             let s = Float(limit) / Float(max(w, h))
             let nw = max(1, Int(Float(w) * s)), nh = max(1, Int(Float(h) * s))
@@ -208,121 +382,14 @@ struct EditorView: View {
             VStack {
                 StatusBanner(model: model)
                 Spacer()
-                if model.mode == .mesh {
-                    MeshToolbar(model: model)
-                } else {
-                    ToolBar(model: model)
+                switch model.mode {
+                case .mesh: MeshToolBar(model: model)
+                case .model: ModelToolBar(model: model)
+                case .animation, .test: EmptyView()
                 }
             }
             .padding(12)
         }
-    }
-}
-
-/// What the canvas is doing right now (recording, mesh editing).
-private struct StatusBanner: View {
-    @ObservedObject var model: EditorModel
-
-    var body: some View {
-        let _ = model.revision
-        if model.mode == .mesh, let d = model.meshTargetNode {
-            chip("Editing mesh of \(d.name) — \(model.meshVertices.count) vertices", icon: "square.grid.3x3", color: .accentColor)
-        } else if let p = model.armed {
-            if let k = model.armedKeypoint {
-                let v = p.value(at: k)
-                chip("Recording \(p.name) at " + (p.isVec2 ? String(format: "%.2f, %.2f", v.x, v.y) : String(format: "%.2f", v.x)),
-                     icon: "record.circle", color: .red)
-            } else {
-                chip("Move \(p.name) onto a keypoint to record", icon: "exclamationmark.circle", color: .orange)
-            }
-        }
-    }
-
-    private func chip(_ text: String, icon: String, color: Color) -> some View {
-        Label(text, systemImage: icon)
-            .font(.callout.weight(.medium))
-            .foregroundStyle(.white)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 7)
-            .background(color.opacity(0.9), in: Capsule())
-    }
-}
-
-/// Tools for Model mode.
-private struct ToolBar: View {
-    @ObservedObject var model: EditorModel
-
-    var body: some View {
-        HStack(spacing: 14) {
-            Picker("Tool", selection: $model.tool) {
-                ForEach(EditorModel.Tool.allCases) { t in
-                    Label(t.title, systemImage: t.icon).tag(t)
-                }
-            }
-            .pickerStyle(.segmented)
-            .frame(width: 300)
-            if model.tool == .brush {
-                if model.armed == nil {
-                    Text("Arm a parameter to deform").font(.caption).foregroundStyle(.secondary)
-                } else {
-                    labeled("Size") {
-                        Slider(value: $model.brushRadius, in: 10...400).frame(width: 110)
-                    }
-                    labeled("Strength") {
-                        Slider(value: $model.brushStrength, in: 0.05...1).frame(width: 90)
-                    }
-                }
-            }
-            Divider().frame(height: 24)
-            Toggle(isOn: $model.showWireframe) { Image(systemName: "square.grid.3x3") }
-                .toggleStyle(.button)
-            Toggle(isOn: $model.physicsPreview) { Image(systemName: "wind") }
-                .toggleStyle(.button)
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 8)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
-    }
-}
-
-/// Tools for Mesh mode.
-private struct MeshToolbar: View {
-    @ObservedObject var model: EditorModel
-
-    var body: some View {
-        let _ = model.revision
-        HStack(spacing: 12) {
-            Picker("Mesh tool", selection: $model.meshTool) {
-                ForEach(EditorModel.MeshTool.allCases) { t in Label(t.title, systemImage: t.icon).tag(t) }
-            }
-            .pickerStyle(.segmented)
-            .frame(width: 200)
-            Divider().frame(height: 24)
-            labeled("Spacing \(Int(model.meshSpacing))") {
-                Slider(value: $model.meshSpacing, in: 12...300).frame(width: 110)
-            }
-            Button("Auto Mesh") { model.autoMesh() }
-            Menu {
-                Button("Simple Quad") { model.quadMesh() }
-                Button("Revert Changes") { model.revertMesh() }
-            } label: {
-                Image(systemName: "ellipsis.circle")
-            }
-            Divider().frame(height: 24)
-            Button("Cancel", role: .cancel) { model.exitMeshMode(apply: false) }
-            Button("Apply") { model.exitMeshMode(apply: true) }
-                .buttonStyle(.borderedProminent)
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 8)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
-    }
-}
-
-private func labeled<Content: View>(_ title: String, @ViewBuilder _ content: () -> Content) -> some View {
-    VStack(alignment: .leading, spacing: 0) {
-        Text(title).font(.caption2).foregroundStyle(.secondary)
-        content()
     }
 }
 
