@@ -40,6 +40,8 @@ public final class Parameter {
     var axisPoints: [[Float]] = [[0, 1], [0, 1]]
     var bindings: [Binding] = []
 
+    var extraJSON: [String: Any] = [:]
+
     private var addSum = Vec2.zero
     private var addCount = 0
     private var mulSum = Vec2.zero
@@ -49,6 +51,8 @@ public final class Parameter {
     public var bindingCount: Int { bindings.count }
 
     init(json: [String: Any]) {
+        extraJSON = json
+        extraJSON["bindings"] = nil
         uuid = json.uint32("uuid") ?? 0
         name = json.string("name") ?? ""
         isVec2 = json.bool("is_vec2") ?? false
@@ -68,6 +72,19 @@ public final class Parameter {
                 : ValueBinding(parameter: self, json: b)
             if let binding { bindings.append(binding) }
         }
+    }
+
+    func serialize() -> [String: Any] {
+        var j = extraJSON
+        j["uuid"] = uuid
+        j["name"] = name
+        j["is_vec2"] = isVec2
+        j["min"] = [min.x, min.y]
+        j["max"] = [max.x, max.y]
+        j["defaults"] = [defaults.x, defaults.y]
+        j["axis_points"] = axisPoints
+        j["bindings"] = bindings.map { $0.serialize() }
+        return j
     }
 
     func finalize(_ puppet: Puppet) {
@@ -149,15 +166,43 @@ public final class Parameter {
 
 // MARK: - Bindings
 
-class Binding {
+public class Binding {
     unowned let parameter: Parameter
-    let nodeRef: UInt32
-    let target: String
-    let interpolation: InterpolateMode
+    var nodeRef: UInt32
+    /// What the binding drives: "deform", "transform.t.x", "opacity", ...
+    public let target: String
+    public var interpolation: InterpolateMode
     var isSet: [[Bool]]
-    weak var node: Node?
+    public internal(set) weak var node: Node?
+    var extraJSON: [String: Any] = [:]
+
+    init(parameter: Parameter, node: Node, target: String) {
+        self.parameter = parameter
+        self.node = node
+        nodeRef = node.uuid
+        self.target = target
+        interpolation = .linear
+        isSet = Array(repeating: Array(repeating: false, count: parameter.axisPoints[1].count),
+                      count: parameter.axisPoints[0].count)
+    }
+
+    func serialize() -> [String: Any] {
+        var j = extraJSON
+        j["node"] = nodeRef
+        j["param_name"] = target
+        j["isSet"] = isSet
+        switch interpolation {
+        case .nearest: j["interpolate_mode"] = "Nearest"
+        case .linear: j["interpolate_mode"] = "Linear"
+        case .cubic: j["interpolate_mode"] = "Cubic"
+        }
+        return j
+    }
 
     init(parameter: Parameter, json: [String: Any]) {
+        extraJSON = json
+        extraJSON["values"] = nil
+        extraJSON["isSet"] = nil
         self.parameter = parameter
         nodeRef = json.uint32("node") ?? 0
         target = json.string("param_name") ?? ""
@@ -212,6 +257,19 @@ class Binding {
 final class ValueBinding: Binding {
     var values: [[Float]]
 
+    override init(parameter: Parameter, node: Node, target: String) {
+        let def = node.defaultValue(target)
+        values = Array(repeating: Array(repeating: def.isNaN ? 0 : def, count: parameter.axisPoints[1].count),
+                       count: parameter.axisPoints[0].count)
+        super.init(parameter: parameter, node: node, target: target)
+    }
+
+    override func serialize() -> [String: Any] {
+        var j = super.serialize()
+        j["values"] = values
+        return j
+    }
+
     override init(parameter: Parameter, json: [String: Any]) {
         values = (json["values"] as? [[NSNumber]])?.map { $0.map(\.floatValue) } ?? []
         super.init(parameter: parameter, json: json)
@@ -231,6 +289,19 @@ final class ValueBinding: Binding {
 
 final class DeformBinding: Binding {
     var values: [[[Vec2]]]
+
+    override init(parameter: Parameter, node: Node, target: String) {
+        let n = (node as? Drawable)?.vertices.count ?? 0
+        values = Array(repeating: Array(repeating: Array(repeating: .zero, count: n), count: parameter.axisPoints[1].count),
+                       count: parameter.axisPoints[0].count)
+        super.init(parameter: parameter, node: node, target: target)
+    }
+
+    override func serialize() -> [String: Any] {
+        var j = super.serialize()
+        j["values"] = values.map { col in col.map { cell in cell.map { [$0.x, $0.y] } } }
+        return j
+    }
 
     override init(parameter: Parameter, json: [String: Any]) {
         var vals: [[[Vec2]]] = []

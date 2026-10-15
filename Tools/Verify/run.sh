@@ -58,6 +58,39 @@ for m in Aka Midori; do
   FRAMES=600 check $m physics
   FRAMES=200 check $m physics "Head:: Yaw-Pitch" 1,0.5
 done
+# Saving: re-save each model with Pad2D's writer, load that file in the
+# original Inochi2D, and compare with the port on the original file.
+for m in Aka Midori; do
+  "$port" "$models/$m.inx" save "build/$m-saved.inx"
+  for mode in rest params; do
+    "$ref" "build/$m-saved.inx" $mode > build/ref.txt
+    "$port" "$models/$m.inx" $mode > build/port.txt
+    python3 compare.py build/ref.txt build/port.txt "$m saved by Pad2D, $mode" | tee -a build/report.txt
+    grep -q "mismatched=0 " <(tail -1 build/report.txt) || status=1
+  done
+  "$ref" "build/$m-saved.inx" params "Head:: Yaw-Pitch" 1,1 > build/ref.txt
+  "$port" "$models/$m.inx" params "Head:: Yaw-Pitch" 1,1 > build/port.txt
+  python3 compare.py build/ref.txt build/port.txt "$m saved by Pad2D, head turned" | tee -a build/report.txt
+  grep -q "mismatched=0 " <(tail -1 build/report.txt) || status=1
+done
+
+# Editing: a puppet built and rigged from scratch by Pad2D must behave the
+# same in the original runtime.
+"$port" - rig build/rig.inx
+rigcheck() {
+  local label="$1"; shift
+  "$ref" build/rig.inx "$@" > build/ref.txt
+  "$port" build/rig.inx "$@" > build/port.txt
+  python3 compare.py build/ref.txt build/port.txt "Rig made in Pad2D, $label" | tee -a build/report.txt
+  grep -q "mismatched=0 " <(tail -1 build/report.txt) || status=1
+}
+rigcheck rest rest
+rigcheck "turn 1,1" params "Head:: Yaw-Pitch" 1,1
+rigcheck "turn -1,-1" params "Head:: Yaw-Pitch" -1,-1
+rigcheck "turn 0.3,-0.6" params "Head:: Yaw-Pitch" 0.3,-0.6
+rigcheck "turn -0.5,0.9" params "Head:: Yaw-Pitch" -0.5,0.9
+FRAMES=120 rigcheck physics physics "Head:: Yaw-Pitch" 1,0.5
+
 # Pixels: Inochi2D's own OpenGL renderer (headless Mesa) vs the port's renderer.
 # Run at roughly a quarter of the iPad's screen size to keep CI fast.
 glref=glreference/inochi2d-glreference

@@ -14,6 +14,13 @@ public class Node {
     weak var puppetRef: Puppet?
 
     var relZSort: Float = 0
+    /// The node's own z-sort (draw order key; higher draws further back).
+    public var zsort: Float {
+        get { relZSort }
+        set { relZSort = newValue }
+    }
+    /// Fields from the file that Pad2D doesn't model, kept so saving loses nothing.
+    var extraJSON: [String: Any] = [:]
     public var lockToRoot = false
 
     public var localTransform = Transform()
@@ -183,6 +190,8 @@ public class Node {
     // MARK: Loading
 
     func deserialize(_ json: [String: Any]) {
+        extraJSON = json
+        extraJSON["children"] = nil
         uuid = json.uint32("uuid") ?? 0
         if let n = json.string("name") { name = n }
         enabled = json.bool("enabled") ?? true
@@ -198,6 +207,25 @@ public class Node {
             addChild(node)
             node.deserialize(child)
         }
+    }
+
+    // MARK: Saving
+
+    func serialize() -> [String: Any] {
+        var j = extraJSON
+        j["uuid"] = uuid
+        j["name"] = name
+        j["type"] = (extraJSON["type"] as? String) ?? typeId
+        j["enabled"] = enabled
+        j["zsort"] = relZSort
+        let t = localTransform
+        j["transform"] = ["trans": [t.translation.x, t.translation.y, t.translation.z],
+                          "rot": [t.rotation.x, t.rotation.y, t.rotation.z],
+                          "scale": [t.scale.x, t.scale.y]] as [String: Any]
+        j["lockToRoot"] = lockToRoot
+        let kids = children.map { $0.serialize() }
+        j["children"] = kids.isEmpty ? nil : kids
+        return j
     }
 
     static func make(type: String) -> Node? {
@@ -256,6 +284,21 @@ public class Drawable: Node {
         indices = (mesh["indices"] as? [NSNumber])?.map { $0.uint16Value } ?? []
         origin = mesh.vec2("origin") ?? .zero
         deformation = Array(repeating: .zero, count: vertices.count)
+    }
+
+    /// Set when the mesh topology changed, so stale editor metadata isn't saved.
+    var meshEdited = false
+
+    override func serialize() -> [String: Any] {
+        var j = super.serialize()
+        var m = (extraJSON["mesh"] as? [String: Any]) ?? [:]
+        if meshEdited { m["grid_axes"] = nil }
+        m["verts"] = vertices.flatMap { [$0.x, $0.y] }
+        m["uvs"] = uvs.flatMap { [$0.x, $0.y] }
+        m["indices"] = indices.map { Int($0) }
+        m["origin"] = [origin.x, origin.y]
+        j["mesh"] = m
+        return j
     }
 
     /// Adds a deformation (from a parameter binding).
@@ -336,11 +379,20 @@ public enum BlendMode: Int, CaseIterable, Sendable {
          colorBurn, hardLight, softLight, difference, exclusion, subtract, inverse,
          destinationIn, clipToLower, sliceFromLower
 
+    static let names = ["Normal", "Multiply", "Screen", "Overlay", "Darken", "Lighten", "ColorDodge",
+                        "LinearDodge", "AddGlow", "ColorBurn", "HardLight", "SoftLight", "Difference",
+                        "Exclusion", "Subtract", "Inverse", "DestinationIn", "ClipToLower", "SliceFromLower"]
+
     init(name: String?) {
-        let names = ["Normal", "Multiply", "Screen", "Overlay", "Darken", "Lighten", "ColorDodge",
-                     "LinearDodge", "AddGlow", "ColorBurn", "HardLight", "SoftLight", "Difference",
-                     "Exclusion", "Subtract", "Inverse", "DestinationIn", "ClipToLower", "SliceFromLower"]
-        self = names.firstIndex(of: name ?? "").flatMap(BlendMode.init(rawValue:)) ?? .normal
+        self = BlendMode.names.firstIndex(of: name ?? "").flatMap(BlendMode.init(rawValue:)) ?? .normal
+    }
+
+    /// The name used in Inochi2D files.
+    public var name: String { BlendMode.names[rawValue] }
+
+    /// A readable name, e.g. "Color Dodge".
+    public var title: String {
+        name.replacingOccurrences(of: "([a-z])([A-Z])", with: "$1 $2", options: .regularExpression)
     }
 }
 
@@ -378,7 +430,21 @@ public final class Part: Drawable {
         tint = json.vec3("tint") ?? .one
         screenTint = json.vec3("screenTint") ?? .zero
         blendMode = BlendMode(name: json.string("blend_mode"))
+        emissionStrength = json.float("emissionStrength") ?? 1
         masks = parseMasks(json)
+    }
+
+    override func serialize() -> [String: Any] {
+        var j = super.serialize()
+        j["textures"] = textureSlots
+        j["blend_mode"] = blendMode.name
+        j["tint"] = [tint.x, tint.y, tint.z]
+        j["screenTint"] = [screenTint.x, screenTint.y, screenTint.z]
+        j["emissionStrength"] = emissionStrength
+        j["mask_threshold"] = maskAlphaThreshold
+        j["opacity"] = opacity
+        writeMasks(masks, into: &j)
+        return j
     }
 
     override func finalize() {
@@ -499,6 +565,14 @@ func parseMasks(_ json: [String: Any]) -> [MaskBinding] {
     return out
 }
 
+func writeMasks(_ masks: [MaskBinding], into j: inout [String: Any]) {
+    j["masked_by"] = nil
+    j["mask_mode"] = nil
+    j["masks"] = masks.isEmpty ? nil : masks.map {
+        ["source": $0.sourceUUID, "mode": $0.mode == .dodge ? "DodgeMask" : "Mask"] as [String: Any]
+    }
+}
+
 func resolveMasks(_ masks: [MaskBinding], puppet: Puppet?) -> [MaskBinding] {
     masks.compactMap { m in
         guard let d = puppet?.root.find(uuid: m.sourceUUID) as? Drawable else { return nil }
@@ -536,6 +610,18 @@ public final class Composite: Node {
         masks = parseMasks(json)
         propagateMeshGroup = json.bool("propagate_meshgroup") ?? false
         super.deserialize(json)
+    }
+
+    override func serialize() -> [String: Any] {
+        var j = super.serialize()
+        j["blend_mode"] = blendMode.name
+        j["tint"] = [tint.x, tint.y, tint.z]
+        j["screenTint"] = [screenTint.x, screenTint.y, screenTint.z]
+        j["mask_threshold"] = threshold
+        j["opacity"] = opacity
+        if propagateMeshGroup || extraJSON["propagate_meshgroup"] != nil { j["propagate_meshgroup"] = propagateMeshGroup }
+        writeMasks(masks, into: &j)
+        return j
     }
 
     override func finalize() {

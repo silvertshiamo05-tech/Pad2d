@@ -34,6 +34,18 @@ public final class MeshGroup: Drawable {
         translateChildren = json.bool("translate_children") ?? false
     }
 
+    override func serialize() -> [String: Any] {
+        var j = super.serialize()
+        j["dynamic_deformation"] = dynamic
+        j["translate_children"] = translateChildren
+        return j
+    }
+
+    /// Forces the triangle lookup to be rebuilt (after the mesh changes).
+    func invalidate() {
+        isPrecalculated = false
+    }
+
     // The original's postProcess forwards to preProcess (already done by then).
     override func postProcess() {
         super.preProcess()

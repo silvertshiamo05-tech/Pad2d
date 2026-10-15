@@ -169,6 +169,32 @@ public final class SimplePhysics: Node {
         localOnly = json.bool("local_only") ?? false
     }
 
+    override func serialize() -> [String: Any] {
+        var j = super.serialize()
+        j["param"] = paramRef
+        j["model_type"] = model == .pendulum ? "Pendulum" : "SpringPendulum"
+        switch mapMode {
+        case .angleLength: j["map_mode"] = "AngleLength"
+        case .xy: j["map_mode"] = "XY"
+        case .lengthAngle: j["map_mode"] = "LengthAngle"
+        case .yx: j["map_mode"] = "YX"
+        }
+        j["gravity"] = gravity
+        j["length"] = length
+        j["frequency"] = frequency
+        j["angle_damping"] = angleDamping
+        j["length_damping"] = lengthDamping
+        j["output_scale"] = [outputScale.x, outputScale.y]
+        j["local_only"] = localOnly
+        return j
+    }
+
+    /// Points the driver at a parameter (nil to disconnect).
+    public func setParameter(_ p: Parameter?) {
+        param = p
+        paramRef = p?.uuid ?? .max
+    }
+
     override func finalize() {
         param = puppet?.parameters.first { $0.uuid == paramRef }
         super.finalize()

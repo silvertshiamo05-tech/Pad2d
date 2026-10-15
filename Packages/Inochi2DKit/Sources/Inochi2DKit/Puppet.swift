@@ -23,10 +23,13 @@ public struct PuppetPhysics: Sendable {
 /// A loaded Inochi2D puppet.
 public final class Puppet {
     public let root: Node
-    public private(set) var parameters: [Parameter] = []
-    public private(set) var meta = PuppetMeta()
+    public internal(set) var parameters: [Parameter] = []
+    public var meta = PuppetMeta()
     public var physics = PuppetPhysics()
-    public private(set) var textures: [TextureBlob]
+    public internal(set) var textures: [TextureBlob]
+    /// Top-level file fields Pad2D doesn't model (automation, animations...).
+    var extraJSON: [String: Any] = [:]
+    var extensions: [String: Data] = [:]
     public private(set) var automation: [SineAutomation] = []
     public var transform = Transform()
 
@@ -48,7 +51,11 @@ public final class Puppet {
     public init(data: Data) throws {
         let file = try INPFile(data: data)
         textures = file.textures
+        extensions = file.extensions
         let json = file.json
+        extraJSON = json
+        extraJSON["nodes"] = nil
+        extraJSON["param"] = nil
 
         if let m = json.object("meta") {
             meta = PuppetMeta(name: m.string("name"), version: m.string("version"), rigger: m.string("rigger"),
@@ -76,7 +83,19 @@ public final class Puppet {
         finalize()
     }
 
-    private func finalize() {
+    /// A new, empty puppet.
+    public init() {
+        textures = []
+        let r = Node()
+        r.name = "Root"
+        r.uuid = 1
+        root = r
+        root.puppetRef = self
+        extraJSON["meta"] = ["version": "v0.8.7"] as [String: Any]
+        finalize()
+    }
+
+    func finalize() {
         root.finalize()
         for p in parameters { p.finalize(self) }
         for a in automation { a.finalize(self) }
@@ -84,7 +103,7 @@ public final class Puppet {
         sortParts()
     }
 
-    private func scanParts() {
+    func scanParts() {
         rootParts = []
         drivers = []
         drivenParameters = []
