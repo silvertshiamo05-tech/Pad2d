@@ -289,11 +289,12 @@ final class Renderer: NSObject, MTKViewDelegate {
             }
         }
         let bg = source.background
+        let custom = source.backgroundColor
         enc.setRenderPipelineState(backgroundPipeline)
         enc.setDepthStencilState(dsOff)
         var colors: [SIMD4<Float>] = bg.isChecker
             ? [SIMD4(0.80, 0.80, 0.82, 1), SIMD4(0.92, 0.92, 0.94, 1), SIMD4(Float(24 * view.contentScaleFactor), 0, 0, 0)]
-            : [bg.color, bg.color, SIMD4(64, 0, 0, 0)]
+            : [custom ?? bg.color, custom ?? bg.color, SIMD4(64, 0, 0, 0)]
         enc.setFragmentBytes(&colors, length: MemoryLayout<SIMD4<Float>>.stride * 3, index: 0)
         enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
 
@@ -323,6 +324,7 @@ extension BackgroundStyle {
         case .light: return SIMD4(0.97, 0.97, 0.97, 1)
         case .greenScreen: return SIMD4(0, 1, 0, 1)
         case .blueScreen: return SIMD4(0, 0, 1, 1)
+        case .custom: return SIMD4(0.2, 0.2, 0.22, 1)
         }
     }
 

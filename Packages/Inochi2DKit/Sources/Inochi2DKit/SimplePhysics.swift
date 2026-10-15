@@ -338,3 +338,8 @@ public final class SimplePhysics: Node {
         return true
     }
 }
+
+public extension SimplePhysics {
+    /// Anchor and bob positions (puppet space) for drawing the pendulum.
+    var debugLine: (Vec2, Vec2) { (anchor, output) }
+}

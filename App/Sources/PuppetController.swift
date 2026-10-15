@@ -6,7 +6,7 @@ import Inochi2DKit
 extension Puppet: @unchecked Sendable {}
 
 enum BackgroundStyle: String, CaseIterable, Identifiable {
-    case checker, dark, light, greenScreen, blueScreen
+    case checker, dark, light, greenScreen, blueScreen, custom
     var id: String { rawValue }
     var title: String {
         switch self {
@@ -15,6 +15,7 @@ enum BackgroundStyle: String, CaseIterable, Identifiable {
         case .light: return "Light"
         case .greenScreen: return "Green screen"
         case .blueScreen: return "Blue screen"
+        case .custom: return "Custom colour"
         }
     }
 }
@@ -35,7 +36,13 @@ enum TrackingMode: String, CaseIterable, Identifiable {
 @MainActor
 protocol RenderSource: AnyObject {
     var background: BackgroundStyle { get }
+    /// A custom background colour (used when `background` is `.custom`).
+    var backgroundColor: SIMD4<Float>? { get }
     func renderFrame(deltaTime: Double, viewSize: CGSize) -> RenderFrame?
+}
+
+extension RenderSource {
+    var backgroundColor: SIMD4<Float>? { nil }
 }
 
 /// A coloured vertex for editor overlays, in clip space.

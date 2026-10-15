@@ -10,7 +10,13 @@ final class FaceTracker: NSObject, ARSessionDelegate {
         var gazeX: Float, gazeY: Float
         var blinkLeft: Float, blinkRight: Float
         var jawOpen: Float, smile: Float
+        /// Every ARKit blend shape (0...1) plus head pose, for tracking bindings.
+        var shapes: [String: Float] = [:]
     }
+
+    /// Names offered as tracking inputs: head pose first, then ARKit blend shapes.
+    static let inputNames: [String] = ["Head Yaw", "Head Pitch", "Head Roll", "Head X", "Head Y", "Head Z"]
+        + ARFaceAnchor.BlendShapeLocation.allNames
 
     static var isSupported: Bool { ARFaceTrackingConfiguration.isSupported }
 
@@ -76,7 +82,7 @@ final class FaceTracker: NSObject, ARSessionDelegate {
         let b = face.blendShapes
         func v(_ k: ARFaceAnchor.BlendShapeLocation) -> Float { b[k]?.floatValue ?? 0 }
         let degrees: Float = 180 / .pi / 30
-        let s = Sample(
+        var s = Sample(
             yaw: wrap(yaw) * degrees,
             pitch: pitch * degrees,
             roll: roll * degrees,
@@ -86,6 +92,17 @@ final class FaceTracker: NSObject, ARSessionDelegate {
             blinkRight: v(.eyeBlinkRight),
             jawOpen: min(1, v(.jawOpen) * 1.6),
             smile: (v(.mouthSmileLeft) + v(.mouthSmileRight)) / 2)
+        var shapes: [String: Float] = [:]
+        for (k, n) in b { shapes[k.rawValue] = n.floatValue }
+        // Head pose normalised to 0...1 (±45° and ±20 cm around the centre).
+        let quarter: Float = .pi / 4
+        shapes["Head Yaw"] = max(0, min(1, (wrap(yaw) / quarter + 1) / 2))
+        shapes["Head Pitch"] = max(0, min(1, (pitch / quarter + 1) / 2))
+        shapes["Head Roll"] = max(0, min(1, (roll / quarter + 1) / 2))
+        shapes["Head X"] = max(0, min(1, (facePos.x / 0.2 + 1) / 2))
+        shapes["Head Y"] = max(0, min(1, (facePos.y / 0.2 + 1) / 2))
+        shapes["Head Z"] = max(0, min(1, (facePos.z / 0.2 + 1) / 2))
+        s.shapes = shapes
         lock.lock()
         sample = s
         lastUpdate = ProcessInfo.processInfo.systemUptime
@@ -98,4 +115,17 @@ final class FaceTracker: NSObject, ARSessionDelegate {
         while x < -.pi { x += 2 * .pi }
         return x
     }
+}
+
+extension ARFaceAnchor.BlendShapeLocation {
+    static let allNames: [String] = [
+        "eyeBlinkLeft", "eyeLookDownLeft", "eyeLookInLeft", "eyeLookOutLeft", "eyeLookUpLeft", "eyeSquintLeft", "eyeWideLeft",
+        "eyeBlinkRight", "eyeLookDownRight", "eyeLookInRight", "eyeLookOutRight", "eyeLookUpRight", "eyeSquintRight", "eyeWideRight",
+        "jawForward", "jawLeft", "jawRight", "jawOpen", "mouthClose", "mouthFunnel", "mouthPucker", "mouthLeft", "mouthRight",
+        "mouthSmileLeft", "mouthSmileRight", "mouthFrownLeft", "mouthFrownRight", "mouthDimpleLeft", "mouthDimpleRight",
+        "mouthStretchLeft", "mouthStretchRight", "mouthRollLower", "mouthRollUpper", "mouthShrugLower", "mouthShrugUpper",
+        "mouthPressLeft", "mouthPressRight", "mouthLowerDownLeft", "mouthLowerDownRight", "mouthUpperUpLeft", "mouthUpperUpRight",
+        "browDownLeft", "browDownRight", "browInnerUp", "browOuterUpLeft", "browOuterUpRight", "cheekPuff",
+        "cheekSquintLeft", "cheekSquintRight", "noseSneerLeft", "noseSneerRight", "tongueOut",
+    ]
 }
