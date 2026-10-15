@@ -1,0 +1,5 @@
+name "inochi2d-reference"
+description "Dumps puppet geometry from the original Inochi2D 0.8 runtime"
+targetType "executable"
+dependency "inochi2d" path="../build/inochi2d"
+subConfiguration "inochi2d" "renderless"

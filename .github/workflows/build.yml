@@ -1,0 +1,89 @@
+name: Build
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  verify:
+    name: Runtime tests + check against Inochi2D 0.8
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: swift-actions/setup-swift@v2
+        with:
+          swift-version: "6.0"
+
+      - uses: dlang-community/setup-dlang@v2
+        with:
+          compiler: ldc-1.43.0
+
+      - name: Unit tests
+        working-directory: Packages/Inochi2DKit
+        run: swift test
+
+      - name: Compare with the original Inochi2D 0.8.7 runtime
+        run: Tools/Verify/run.sh
+
+  ipad:
+    name: iPad app (unsigned .ipa)
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Bundle sample models
+        run: scripts/fetch-sample-models.sh
+
+      - name: Generate Xcode project
+        run: |
+          brew install xcodegen
+          xcodegen generate
+
+      - name: Build
+        run: |
+          xcodebuild \
+            -project Pad2D.xcodeproj \
+            -scheme Pad2D \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            build > build.log 2>&1 || status=$?
+          grep -E "error:|BUILD" build.log || true
+          exit ${status:-0}
+
+      - name: Package .ipa
+        run: |
+          mkdir -p Payload
+          cp -R build/Build/Products/Release-iphoneos/Pad2D.app Payload/
+          zip -qry Pad2D-unsigned.ipa Payload
+          ls -la Pad2D-unsigned.ipa
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Pad2D-unsigned-ipa
+          path: Pad2D-unsigned.ipa
+
+      - name: Publish "latest" release (main only)
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        run: |
+          git tag -f latest
+          git push -f origin latest
+
+      - uses: softprops/action-gh-release@v2
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        with:
+          tag_name: latest
+          name: Latest build
+          prerelease: true
+          make_latest: true
+          body: |
+            Unsigned build of Pad2D (Inochi2D player for iPadOS 17+), built from ${{ github.sha }}.
+            Sign it with a sideloading tool (e.g. SideStore) before installing.
+          files: Pad2D-unsigned.ipa
