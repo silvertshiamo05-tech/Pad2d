@@ -1,6 +1,6 @@
 # Pad2D: Inochi2D for iPad
 
-Pad2D plays [Inochi2D](https://github.com/Inochi2D/inochi2d) puppets (`.inp` files and Inochi Creator `.inx` projects) natively on iPadOS. It renders with Metal and supports face tracking, physics and touch control. It's tuned for the iPad 10th generation (A14, 4 GB RAM).
+Pad2D makes and plays [Inochi2D](https://github.com/Inochi2D/inochi2d) puppets (`.inp` files and Inochi Creator `.inx` projects) natively on iPadOS. You can rig a model from a layered PSD on the iPad itself, then test it with face tracking. It renders with Metal and supports face tracking, physics and touch control. It's tuned for the iPad 10th generation (A14, 4 GB RAM).
 
 Its runtime is a **Swift port of the Inochi2D 0.8 runtime**, the version Inochi Creator and Inochi Session use today. CI checks it against the original D code on every push (see [Verification](#verification)).
 
@@ -9,6 +9,30 @@ Its runtime is a **Swift port of the Inochi2D 0.8 runtime**, the version Inochi 
 *Sample models Aka and Midori by seagetch (CC BY 4.0), rendered from Pad2D's draw list.*
 
 > Pad2D is an independent, unofficial project and isn't affiliated with the Inochi2D Project. Inochi2D is © the Inochi2D Project, BSD 2-Clause licensed; see `Packages/Inochi2DKit/LICENSE`.
+
+## Editor
+
+Tap **Edit** on any model, or **New from PSD** in the library.
+
+- **New from PSD:** every layer becomes a part, placed where it is in the PSD, with an auto-generated mesh. Folders become groups, or composites if they have a blend mode. Save the PSD as 8-bit RGB (PSB works too).
+- **Model mode:**
+  - Tap a part to select it, and use **Move** to drag it.
+  - The inspector edits position, rotation, scale, z-sort, opacity, blend mode, tint, masks, mesh groups and physics.
+  - Drag a number's label sideways to scrub its value.
+- **Mesh mode:**
+  - Tap to add vertices, drag them to move, or switch to Delete.
+  - **Auto Mesh** wraps the part's opaque pixels.
+  - Existing deformations are carried over to the new mesh.
+- **Rigging:**
+  - In **Parameters**, create a 1D or 2D parameter and press its record button to arm it.
+  - At each keypoint, use the **Deform** brush (finger or Pencil) to push vertices, or change values in the inspector. Those are recorded as that keypoint's offsets.
+  - Keypoints in between are filled in the same way Inochi Creator does it.
+  - Red dots on the pad show the keypoints the selected part has recorded.
+  - Add keypoint rows and columns from a parameter's ••• menu.
+- **Physics:** add a Physics node under the part it hangs from, pick its parameter, and turn on the wind button to preview.
+- **Undo/redo**, **Save**, **Play** (opens the model with tracking), and **Export** to Files as `.inx` (Inochi Creator) or `.inp` (Inochi Session).
+
+Files saved by Pad2D load in the original Inochi2D 0.8.7 and behave the same (checked in CI).
 
 ## Features
 
@@ -63,7 +87,12 @@ Packages/Inochi2DKit/   Swift port of the Inochi2D 0.8 runtime (no UIKit/Metal; 
   DrawList.swift        Renderer-agnostic draw commands
   Tracking.swift        Tracking-to-parameter mapping
   TGA.swift             Texture decoder for Inochi Creator's TGA textures
-App/Sources/            iPad app (SwiftUI + Metal + ARKit)
+  Writer.swift          Saving .inp/.inx
+  Editing.swift         Editing operations (nodes, meshes, parameters, bindings)
+  Reinterpolate.swift   Inochi Creator's keypoint fill-in
+  PSD.swift             PSD reader and importer
+  MeshGenerator.swift   Auto-mesh and Delaunay triangulation
+App/Sources/            iPad app (SwiftUI + Metal + ARKit); the editor is in App/Sources/Editor
 Tools/Verify/           Compares the port with the original Inochi2D 0.8.7
 project.yml             XcodeGen project definition
 ```
@@ -85,6 +114,6 @@ Tools/Verify/run.sh                     # needs ldc2/dub, swift, python3, Mesa E
 ## Not yet supported
 
 - Inochi2D 0.9 files (`TRNSRTS2`). 0.9 is still being rewritten upstream, and its current code can't animate models yet.
-- Inochi Creator's editing features. Pad2D is a player.
+- Some of Inochi Creator's editing tools: mesh groups can't deform children through the brush yet, there's no automatic mirroring of deformations, and no animation timeline.
 - Emission and bump maps (0.8 renders these to extra buffers for scene lighting).
 - Animations stored in the model (the 0.8 animation player), and VMC/OpenSeeFace network tracking.
