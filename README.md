@@ -70,11 +70,16 @@ project.yml             XcodeGen project definition
 
 ## Verification
 
-`Tools/Verify/run.sh` builds the original Inochi2D 0.8.7 (D, renderless configuration) and the Swift port. It then compares every drawn vertex of both sample models, in draw order, across the rest pose, parameter poses (2D head, body roll, mouth, blink, breath) and up to 600 frames of physics. The port matches to within 0.01 px. CI runs this on every push.
+`Tools/Verify/run.sh` checks the port against the original Inochi2D 0.8.7 in two ways:
+
+1. **Geometry.** It builds Inochi2D 0.8.7 (renderless) and compares every drawn vertex of both sample models, in draw order. That covers the rest pose, parameter poses (2D head, body roll, mouth, blink, breath) and up to 600 frames of physics. The port matches to within 0.01 px.
+2. **Pixels.** It renders the models with Inochi2D's own OpenGL renderer (headless, on Mesa) and with a CPU renderer that follows the same rules as Pad2D's Metal shaders (draw list, masks, composites, blend modes, mipmaps). The average difference is under 1.5/255.
+
+CI runs both on every push.
 
 ```sh
 cd Packages/Inochi2DKit && swift test   # unit tests
-Tools/Verify/run.sh                     # needs ldc2/dub, swift, python3
+Tools/Verify/run.sh                     # needs ldc2/dub, swift, python3, Mesa EGL
 ```
 
 ## Not yet supported

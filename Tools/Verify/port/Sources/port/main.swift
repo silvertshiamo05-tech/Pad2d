@@ -4,6 +4,12 @@ import Foundation
 import Inochi2DKit
 
 let args = CommandLine.arguments
+if args.count > 8 && args[2] == "render" {
+    // render <model> render <out.rgba> <width> <height> <centreX> <centreY> <scale>
+    try renderToRGBA(model: args[1], out: args[3], width: Int(args[4])!, height: Int(args[5])!,
+                     centre: Vec2(Float(args[6])!, Float(args[7])!), scale: Float(args[8])!)
+    exit(0)
+}
 let puppet = try Puppet(contentsOf: URL(fileURLWithPath: args[1]))
 let mode = args.count > 2 ? args[2] : "rest"
 puppet.renderParameters = mode != "rest"

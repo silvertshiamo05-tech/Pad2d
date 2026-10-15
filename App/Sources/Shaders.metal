@@ -135,10 +135,13 @@ fragment float4 compositeFragment(VertexOut in [[stage_in]],
     return inochiBlend(inochiColor(tex, p), dst, p.mode.x, true);
 }
 
-// Background: checkerboard or solid colour.
-fragment float4 backgroundFragment(VertexOut in [[stage_in]], constant float4 *colors [[buffer(0)]]) {
+// Background (checkerboard or solid colour), composited *under* the puppet.
+fragment float4 backgroundFragment(VertexOut in [[stage_in]],
+                                   float4 dst [[color(0)]],
+                                   constant float4 *colors [[buffer(0)]]) {
     float4 a = colors[0], b = colors[1];
     float size = colors[2].x;
     int2 cell = int2(floor(in.position.xy / size));
-    return ((cell.x + cell.y) & 1) ? b : a;
+    float4 bg = ((cell.x + cell.y) & 1) ? b : a;
+    return dst + bg * (1.0 - dst.a);
 }

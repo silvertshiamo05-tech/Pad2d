@@ -1,0 +1,6 @@
+name "inochi2d-glreference"
+description "Renders a puppet with the original Inochi2D 0.8 OpenGL renderer (headless, via Mesa EGL)"
+targetType "executable"
+dependency "inochi2d" path="../build/inochi2d"
+subConfiguration "inochi2d" "full"
+libs "EGL"

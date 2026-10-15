@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
 # Checks the Swift port against the original Inochi2D 0.8.7 runtime.
 #
-# Needs: ldc2 + dub (LDC >= 1.41), swift, python3, git, curl.
+# Needs: ldc2 + dub (LDC >= 1.41), swift, python3, git, curl, and Mesa EGL
+# (libegl-mesa0 libgl1-mesa-dri libopengl0) for the pixel comparison.
 # Builds Inochi2D 0.8.7 in its "renderless" configuration (no GPU needed),
 # then compares every drawn vertex of the sample models across rest pose,
 # parameter poses and physics simulation. Fails if anything differs by more
-# than 0.05 px.
+# than 0.05 px. Then renders the models with Inochi2D's own OpenGL renderer
+# (headless, Mesa) and with the port, and compares the pixels.
 set -euo pipefail
 cd "$(dirname "$0")"
 mkdir -p build
@@ -29,6 +31,7 @@ fi
 models=../../App/Resources/Models
 
 (cd reference && dub build --build=release -q)
+(cd glreference && dub build --build=release -q)
 (cd port && swift build -c release -q)
 ref=reference/inochi2d-reference
 port=port/.build/release/port
@@ -55,4 +58,22 @@ for m in Aka Midori; do
   FRAMES=600 check $m physics
   FRAMES=200 check $m physics "Head:: Yaw-Pitch" 1,0.5
 done
+# Pixels: Inochi2D's own OpenGL renderer (headless Mesa) vs the port's renderer.
+# Run at roughly a quarter of the iPad's screen size to keep CI fast.
+glref=glreference/inochi2d-glreference
+render() {
+  local m=$1 cx=$2 cy=$3 scale=$4
+  XDG_SESSION_TYPE=wayland "$glref" "$models/$m.inx" build/gl.rgba 600 1000 "$cx" "$cy" "$scale" 2>/dev/null
+  "$port" "$models/$m.inx" render build/port.rgba 600 1000 "$cx" "$cy" "$scale"
+  python3 compare_images.py build/gl.rgba build/port.rgba 600 1000 "$m pixels $cx,$cy x$scale" || status=1
+}
+# Head close-ups and half-size views of the whole upper/lower body. (Heavy
+# minification is left out: there the comparison measures differences in
+# texture filtering between GPUs rather than in Inochi2D's rendering rules.)
+render Aka 120 -1650 0.9
+render Aka 310 -68 0.5
+render Aka 300 900 0.5
+render Midori -120 -1500 0.9
+render Midori -347 163 0.5
+render Midori -300 1000 0.6
 exit $status

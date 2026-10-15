@@ -183,15 +183,11 @@ final class Renderer: NSObject, MTKViewDelegate {
             return cmd.makeRenderCommandEncoder(descriptor: rp)
         }
 
-        let bg = controller.background
-        guard var enc = pass(drawable.texture, mainStencil, clear: true, clearColor: bg.clearColor) else { cmd.commit(); return }
-        if bg.isChecker {
-            enc.setRenderPipelineState(backgroundPipeline)
-            var colors: [SIMD4<Float>] = [SIMD4(0.80, 0.80, 0.82, 1), SIMD4(0.92, 0.92, 0.94, 1),
-                                          SIMD4(Float(24 * view.contentScaleFactor), 0, 0, 0)]
-            enc.setFragmentBytes(&colors, length: MemoryLayout<SIMD4<Float>>.stride * 3, index: 0)
-            enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
-        }
+        // Like Inochi2D, draw the puppet onto a transparent canvas: blend
+        // modes such as ClipToLower and DestinationIn depend on it. The
+        // background goes underneath afterwards.
+        guard var enc = pass(drawable.texture, mainStencil, clear: true,
+                             clearColor: MTLClearColor(red: 0, green: 0, blue: 0, alpha: 0)) else { cmd.commit(); return }
 
         if let frame, let vb = vbuf, let ib = ibuf {
             var mvp = frame.viewProjection
@@ -288,6 +284,14 @@ final class Renderer: NSObject, MTKViewDelegate {
                 }
             }
         }
+        let bg = controller.background
+        enc.setRenderPipelineState(backgroundPipeline)
+        enc.setDepthStencilState(dsOff)
+        var colors: [SIMD4<Float>] = bg.isChecker
+            ? [SIMD4(0.80, 0.80, 0.82, 1), SIMD4(0.92, 0.92, 0.94, 1), SIMD4(Float(24 * view.contentScaleFactor), 0, 0, 0)]
+            : [bg.color, bg.color, SIMD4(64, 0, 0, 0)]
+        enc.setFragmentBytes(&colors, length: MemoryLayout<SIMD4<Float>>.stride * 3, index: 0)
+        enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
         enc.endEncoding()
         cmd.present(drawable)
         cmd.commit()
@@ -295,13 +299,13 @@ final class Renderer: NSObject, MTKViewDelegate {
 }
 
 extension BackgroundStyle {
-    var clearColor: MTLClearColor {
+    var color: SIMD4<Float> {
         switch self {
-        case .checker: return MTLClearColor(red: 0.8, green: 0.8, blue: 0.82, alpha: 1)
-        case .dark: return MTLClearColor(red: 0.11, green: 0.11, blue: 0.13, alpha: 1)
-        case .light: return MTLClearColor(red: 0.97, green: 0.97, blue: 0.97, alpha: 1)
-        case .greenScreen: return MTLClearColor(red: 0, green: 1, blue: 0, alpha: 1)
-        case .blueScreen: return MTLClearColor(red: 0, green: 0, blue: 1, alpha: 1)
+        case .checker: return SIMD4(0.8, 0.8, 0.82, 1)
+        case .dark: return SIMD4(0.11, 0.11, 0.13, 1)
+        case .light: return SIMD4(0.97, 0.97, 0.97, 1)
+        case .greenScreen: return SIMD4(0, 1, 0, 1)
+        case .blueScreen: return SIMD4(0, 0, 1, 1)
         }
     }
 

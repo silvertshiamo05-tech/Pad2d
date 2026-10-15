@@ -1,6 +1,7 @@
 import Metal
 import ImageIO
 import CoreGraphics
+import Accelerate
 import os
 import Inochi2DKit
 
@@ -92,13 +93,15 @@ struct TextureLoader {
         return (w, h)
     }
 
-    /// Premultiplied RGBA8, top row first.
+    /// RGBA8 exactly as stored in the file, top row first.
+    ///
+    /// Inochi2D uploads texture bytes unchanged and blends them as
+    /// premultiplied colour (Inochi Creator exports them that way), so they
+    /// must not be premultiplied again here: that darkens every soft edge.
     static func decode(_ blob: TextureBlob) -> ([UInt8], Int, Int)? {
         guard !blob.isEmpty else { return nil }
         if blob.encoding == .tga, let img = try? TGADecoder.decode(blob.data) {
-            var px = img.rgba
-            TGADecoder.premultiply(&px)
-            return (px, img.width, img.height)
+            return (img.rgba, img.width, img.height)
         }
         // PNG (and anything else ImageIO understands).
         guard let src = CGImageSourceCreateWithData(blob.data as CFData, nil),
@@ -111,6 +114,11 @@ struct TextureLoader {
                                       bytesPerRow: w * 4, space: CGColorSpaceCreateDeviceRGB(),
                                       bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return false }
             ctx.draw(image, in: CGRect(x: 0, y: 0, width: w, height: h))
+            // Core Graphics only renders premultiplied RGBA; undo that so the
+            // bytes match what the file holds.
+            var buffer = vImage_Buffer(data: buf.baseAddress, height: vImagePixelCount(h),
+                                       width: vImagePixelCount(w), rowBytes: w * 4)
+            vImageUnpremultiplyData_RGBA8888(&buffer, &buffer, vImage_Flags(kvImageNoFlags))
             return true
         }
         return ok ? (px, w, h) : nil

@@ -24,6 +24,9 @@ jobs:
         with:
           compiler: ldc-1.43.0
 
+      - name: Headless OpenGL (Mesa) for the pixel comparison
+        run: sudo apt-get update -q && sudo apt-get install -y -q --no-install-recommends libegl1 libegl-mesa0 libgl1-mesa-dri libopengl0
+
       - name: Unit tests
         working-directory: Packages/Inochi2DKit
         run: swift test
