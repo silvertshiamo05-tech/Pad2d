@@ -9,6 +9,7 @@ public enum NodeKind: String, CaseIterable, Sendable {
     case composite = "Composite"
     case meshGroup = "MeshGroup"
     case physics = "SimplePhysics"
+    case camera = "Camera"
 
     public var title: String {
         switch self {
@@ -17,6 +18,7 @@ public enum NodeKind: String, CaseIterable, Sendable {
         case .composite: return "Composite"
         case .meshGroup: return "Mesh Group"
         case .physics: return "Physics"
+        case .camera: return "Camera"
         }
     }
 }
@@ -68,6 +70,11 @@ extension ParameterBinding {
     public var isDeform: Bool { self is DeformBinding }
 
     func reinterpolateAny() {
+        // With nothing set, everything returns to the default (rest).
+        if !isSet.contains(where: { $0.contains(true) }) {
+            for x in isSet.indices { for y in isSet[x].indices { clear(Keypoint(x, y)) } }
+            return
+        }
         (self as? ValueBinding)?.reinterpolateValues()
         (self as? DeformBinding)?.reinterpolateValues()
     }
@@ -136,6 +143,7 @@ public extension Puppet {
         case .composite: n = Composite()
         case .meshGroup: n = MeshGroup()
         case .physics: n = SimplePhysics()
+        case .camera: n = Camera()
         }
         n.uuid = newUUID()
         n.name = name
@@ -222,7 +230,7 @@ public extension Puppet {
         part.uvs = m.points.map { Vec2($0.x / size.x, $0.y / size.y) }
         part.indices = m.indices
         part.deformation = Array(repeating: .zero, count: part.vertices.count)
-        part.textureSlots = [textureSlot]
+        part.textureIDs = [textureSlot, nil, nil]
         part.meshEdited = true
         return part
     }
@@ -273,12 +281,20 @@ public extension Puppet {
     func setMesh(_ d: Drawable, vertices newVerts: [Vec2], indices newIndices: [UInt16], uvs: [Vec2]? = nil) {
         let oldVerts = d.vertices, oldIdx = d.indices
         let toUV = uvMapping(for: d)
-        func remap(_ offsets: [Vec2]) -> [Vec2] {
-            newVerts.map { interpolateOnMesh($0, vertices: oldVerts, indices: oldIdx, values: offsets) }
-        }
+        // Set keypoints are re-sampled onto the new mesh by position (as
+        // Inochi Creator does); unset ones are refilled by interpolation.
+        var touched: [DeformBinding] = []
         for p in parameters {
             for case let b as DeformBinding in p.bindings where b.node === d {
-                b.values = b.values.map { col in col.map { remap($0) } }
+                for x in b.values.indices {
+                    for y in b.values[x].indices {
+                        b.values[x][y] = b.isSet[x][y]
+                            ? transferDeformation(to: newVerts, from: oldVerts, indices: oldIdx,
+                                                  offsets: b.values[x][y], flipHorizontally: false)
+                            : Array(repeating: .zero, count: newVerts.count)
+                    }
+                }
+                touched.append(b)
             }
         }
         d.uvs = uvs ?? newVerts.map(toUV)
@@ -288,6 +304,7 @@ public extension Puppet {
         d.meshEdited = true
         (d as? MeshGroup)?.invalidate()
         rebuild()
+        for b in touched { b.reinterpolateAny() }
     }
 
     // MARK: Parameters
@@ -419,20 +436,7 @@ public extension Puppet {
 
     /// Clears a keypoint of a binding; the binding goes away when nothing is set.
     func unset(_ b: ParameterBinding, at k: Keypoint) {
-        guard b.isSet(k) else { return }
-        b.isSet[k.x][k.y] = false
-        if !b.isSet.contains(where: { $0.contains(true) }) {
-            removeBinding(b)
-            return
-        }
-        if let v = b as? ValueBinding, let n = v.node {
-            let def = n.defaultValue(v.target)
-            v.values[k.x][k.y] = def.isNaN ? 0 : def
-        }
-        if let d = b as? DeformBinding {
-            d.values[k.x][k.y] = Array(repeating: .zero, count: d.values[k.x][k.y].count)
-        }
-        b.reinterpolateAny()
+        b.unset(k)
     }
 
     /// Like Inochi Creator's createBinding: a keypoint sitting exactly at

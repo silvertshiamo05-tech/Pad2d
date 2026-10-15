@@ -3,24 +3,46 @@
 
 import Foundation
 
-public enum ParamMergeMode: String, Sendable {
+public enum ParamMergeMode: String, CaseIterable, Sendable {
     case additive, weighted, multiplicative, forced, passthrough
+
+    /// The name written to files.
+    public var name: String { rawValue.prefix(1).uppercased() + rawValue.dropFirst() }
 }
 
 public enum InterpolateMode: CaseIterable, Sendable {
-    case nearest, linear, cubic
+    case nearest, linear, stepped, cubic, bezier
 
     init(_ any: Any?) {
         if let s = any as? String {
             switch s.lowercased() {
-            case "nearest", "stepped": self = .nearest
+            case "nearest": self = .nearest
+            case "stepped": self = .stepped
             case "cubic": self = .cubic
+            case "bezier": self = .bezier
             default: self = .linear
             }
         } else if let n = any as? NSNumber {
-            self = n.intValue == 0 ? .nearest : (n.intValue == 2 ? .cubic : .linear)
+            switch n.intValue {
+            case 0: self = .nearest
+            case 2: self = .stepped
+            case 3: self = .cubic
+            case 4: self = .bezier
+            default: self = .linear
+            }
         } else {
             self = .linear
+        }
+    }
+
+    /// The name written to files.
+    public var name: String {
+        switch self {
+        case .nearest: return "Nearest"
+        case .linear: return "Linear"
+        case .stepped: return "Stepped"
+        case .cubic: return "Cubic"
+        case .bezier: return "Bezier"
         }
     }
 }
@@ -36,7 +58,9 @@ public final class Parameter {
     public internal(set) var defaults = Vec2(0, 0)
     public var value = Vec2(0, 0)
     public internal(set) var lastInternal = Vec2(0, 0)
-    var mergeMode = ParamMergeMode.passthrough
+    public var mergeMode = ParamMergeMode.additive
+    /// The parameter group (Inochi Creator) this parameter is in.
+    public var groupUUID: UInt32?
     var axisPoints: [[Float]] = [[0, 1], [0, 1]]
     var bindings: [ParameterBinding] = []
 
@@ -65,6 +89,8 @@ public final class Parameter {
         if let m = json.string("merge_mode"), let mode = ParamMergeMode(rawValue: m.lowercased()) {
             mergeMode = mode
         }
+        groupUUID = json.uint32("parentUUID").flatMap { $0 == UInt32.max ? nil : $0 }
+        extraJSON["parentUUID"] = nil
         for case let b as [String: Any] in json.array("bindings") ?? [] {
             guard let target = b.string("param_name") else { continue }
             let binding: ParameterBinding? = target == "deform"
@@ -83,6 +109,8 @@ public final class Parameter {
         j["max"] = [max.x, max.y]
         j["defaults"] = [defaults.x, defaults.y]
         j["axis_points"] = axisPoints
+        j["merge_mode"] = mergeMode.name
+        if let g = groupUUID { j["parentUUID"] = g }
         j["bindings"] = bindings.map { $0.serialize() }
         return j
     }
@@ -191,11 +219,7 @@ public class ParameterBinding {
         j["node"] = nodeRef
         j["param_name"] = target
         j["isSet"] = isSet
-        switch interpolation {
-        case .nearest: j["interpolate_mode"] = "Nearest"
-        case .linear: j["interpolate_mode"] = "Linear"
-        case .cubic: j["interpolate_mode"] = "Cubic"
-        }
+        j["interpolate_mode"] = interpolation.name
         return j
     }
 
@@ -224,11 +248,11 @@ public class ParameterBinding {
         let ix1 = Swift.min(ix + 1, xMax), iy1 = Swift.min(iy + 1, yMax)
         let vec2 = parameter.isVec2
         switch interpolation {
-        case .nearest:
+        case .nearest, .stepped:
             let px = offset.x >= 0.5 ? ix1 : ix
             let py = vec2 ? (offset.y >= 0.5 ? iy1 : iy) : 0
             return [(px, py, 1)]
-        case .linear:
+        case .linear, .bezier:
             if vec2 {
                 let ox = offset.x, oy = offset.y
                 return [(ix, iy, (1 - ox) * (1 - oy)), (ix, iy1, (1 - ox) * oy),

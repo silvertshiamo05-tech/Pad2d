@@ -8,6 +8,7 @@ extension Node {
         case is Composite: return "square.3.layers.3d"
         case is MeshGroup: return "square.grid.3x3.topleft.filled"
         case is SimplePhysics: return "wind"
+        case is Camera: return "video"
         default: return "folder"
         }
     }
@@ -18,6 +19,7 @@ extension Node {
         case is Composite: return "Composite"
         case is MeshGroup: return "Mesh Group"
         case is SimplePhysics: return "Physics"
+        case is Camera: return "Camera"
         default: return "Group"
         }
     }
@@ -117,6 +119,7 @@ struct NodeTreeView: View {
         case .composite: return "square.3.layers.3d"
         case .meshGroup: return "square.grid.3x3.topleft.filled"
         case .physics: return "wind"
+        case .camera: return "video"
         }
     }
 

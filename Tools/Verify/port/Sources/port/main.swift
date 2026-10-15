@@ -35,12 +35,20 @@ let puppet = try Puppet(contentsOf: URL(fileURLWithPath: args[1]))
 let mode = args.count > 2 ? args[2] : "rest"
 puppet.renderParameters = mode != "rest"
 puppet.enableDrivers = mode == "physics"
-if args.count > 4, let p = puppet.parameter(named: args[3]) {
+var player: AnimationPlayer?
+if mode == "anim" {
+    player = AnimationPlayer(puppet: puppet)
+    player?.play(args[3], loop: true)
+}
+if mode != "anim", args.count > 4, let p = puppet.parameter(named: args[3]) {
     let v = args[4].split(separator: ",").map { Float($0)! }
     p.value = Vec2(v[0], v.count > 1 ? v[1] : 0)
 }
-let frames = mode == "physics" ? Int(ProcessInfo.processInfo.environment["FRAMES"] ?? "120")! : 1
-for _ in 0..<frames { puppet.update(deltaTime: 1.0 / 60) }
+let frames = mode == "physics" || mode == "anim" ? Int(ProcessInfo.processInfo.environment["FRAMES"] ?? "120")! : 1
+for _ in 0..<frames {
+    player?.update(1.0 / 60)
+    puppet.update(deltaTime: 1.0 / 60)
+}
 let list = puppet.draw()
 for case let .part(p) in list.commands {
     let used = Set(list.indices[p.mesh.indexStart..<(p.mesh.indexStart + p.mesh.indexCount)]).sorted()
@@ -97,6 +105,23 @@ func buildRig() -> Puppet {
     puppet.setValue(sway, face, target: "transform.r.z", at: Keypoint(1, 1), value: 0.2)
 
     puppet.move(eye, to: puppet.root)
+
+    // Creator-only data the original runtime must accept: a parameter group,
+    // a camera, a flip pair, an animation, automation and a 3-slot texture list.
+    let group = puppet.addGroup(name: "Head")
+    turn.groupUUID = group.uuid
+    let cam = puppet.makeNode(.camera, name: "Camera")
+    puppet.add(cam, to: puppet.root)
+    puppet.flipPairs = [FlipPair(face.uuid, eye.uuid)]
+    let idle = puppet.createParameter(name: "Idle", isVec2: false)
+    let sine = SineAutomation()
+    sine.name = "Idle wave"
+    sine.bind(AutomationBinding(param: idle, axis: 0, range: Vec2(0, 1)))
+    puppet.automation = [sine]
+    let anim = Animation()
+    anim.length = 30
+    anim.lanes = [AnimationLane(parameter: turn, axis: 0, frames: [Keyframe(frame: 0, value: -1), Keyframe(frame: 29, value: 1)])]
+    puppet.animations["Turn"] = anim
     puppet.rebuild()
     return puppet
 }

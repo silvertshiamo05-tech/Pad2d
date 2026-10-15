@@ -30,7 +30,11 @@ public final class Puppet {
     /// Top-level file fields Pad2D doesn't model (automation, animations...).
     var extraJSON: [String: Any] = [:]
     var extensions: [String: Data] = [:]
-    public private(set) var automation: [SineAutomation] = []
+    public var automation: [Automation] = []
+    /// Animations by name.
+    public var animations: [String: Animation] = [:]
+    /// Inochi Creator parameter groups (folders in the parameter list).
+    public var groups: [ParameterGroup] = []
     public var transform = Transform()
 
     /// Run parameter bindings (turn off to see the rest pose).
@@ -67,6 +71,9 @@ public final class Puppet {
         extraJSON = json
         extraJSON["nodes"] = nil
         extraJSON["param"] = nil
+        extraJSON["automation"] = nil
+        extraJSON["animations"] = nil
+        extraJSON["groups"] = nil
 
         if let m = json.object("meta") {
             meta = PuppetMeta(name: m.string("name"), version: m.string("version"), rigger: m.string("rigger"),
@@ -86,9 +93,31 @@ public final class Puppet {
         root = r
         root.puppetRef = self
 
-        parameters = (json.array("param") ?? []).compactMap { ($0 as? [String: Any]).map(Parameter.init(json:)) }
-        for case let a as [String: Any] in json.array("automation") ?? [] where a.string("type") == "sine" {
-            automation.append(SineAutomation(json: a))
+        // Groups: either in "groups" (Creator 0.8) or, in older files, mixed
+        // into "param" with their children inside.
+        for case let g as [String: Any] in json.array("groups") ?? [] {
+            groups.append(ParameterGroup(json: g))
+        }
+        for case let pj as [String: Any] in json.array("param") ?? [] {
+            if pj["groupUUID"] != nil {
+                let g = ParameterGroup(json: pj)
+                groups.append(g)
+                for case let c as [String: Any] in pj.array("children") ?? [] {
+                    let p = Parameter(json: c)
+                    p.groupUUID = g.uuid
+                    parameters.append(p)
+                }
+            } else {
+                parameters.append(Parameter(json: pj))
+            }
+        }
+        for case let a as [String: Any] in json.array("automation") ?? [] {
+            automation.append(Automation.make(json: a))
+        }
+        if let anims = json.object("animations") {
+            for (name, a) in anims {
+                if let a = a as? [String: Any] { animations[name] = Animation(json: a) }
+            }
         }
 
         finalize()
@@ -110,6 +139,9 @@ public final class Puppet {
         root.finalize()
         for p in parameters { p.finalize(self) }
         for a in automation { a.finalize(self) }
+        for a in animations.values { a.finalize(self) }
+        let groupIDs = Set(groups.map(\.uuid))
+        for p in parameters where p.groupUUID.map({ !groupIDs.contains($0) }) ?? false { p.groupUUID = nil }
         scanParts()
         sortParts()
     }
@@ -157,7 +189,7 @@ public final class Puppet {
     public func update(deltaTime: Double) {
         time += deltaTime
         transform.update()
-        for a in automation { a.update(time: time) }
+        for a in automation { a.update(time: time, deltaTime: deltaTime) }
         root.beginUpdate()
         if renderParameters {
             for p in parameters where !enableDrivers || !drivenParameters.contains(ObjectIdentifier(p)) {
@@ -194,52 +226,28 @@ public final class Puppet {
     public var parts: [Part] { root.allNodes().compactMap { $0 as? Part } }
 }
 
-// MARK: - Automation
+/// A folder of parameters in Inochi Creator's parameter list.
+public final class ParameterGroup {
+    public internal(set) var uuid: UInt32
+    public var name: String
+    /// Header colour; nil for none.
+    public var color: Vec3?
 
-/// Sine-wave automation (inochi2d.core.automation.sine).
-public final class SineAutomation {
-    struct BindingRef {
-        var paramName: String
-        var axis: Int
-        var range: Vec2
-        weak var param: Parameter?
+    public init(uuid: UInt32, name: String, color: Vec3? = nil) {
+        self.uuid = uuid
+        self.name = name
+        self.color = color
     }
-
-    var name: String
-    var enabled = true
-    var speed: Float = 1
-    var phase: Float = 0
-    var sineType = 0
-    var bindings: [BindingRef] = []
 
     init(json: [String: Any]) {
+        uuid = json.uint32("groupUUID") ?? 0
         name = json.string("name") ?? ""
-        speed = json.float("speed") ?? 1
-        sineType = (json["sine_type"] as? NSNumber)?.intValue ?? 0
-        for case let b as [String: Any] in json.array("bindings") ?? [] {
-            bindings.append(BindingRef(paramName: b.string("param") ?? "",
-                                       axis: (b["axis"] as? NSNumber)?.intValue ?? 0,
-                                       range: b.vec2("range") ?? Vec2(0, 1), param: nil))
-        }
+        color = json.vec3("color").flatMap { $0.x.isFinite ? $0 : nil }
     }
 
-    func finalize(_ puppet: Puppet) {
-        for i in bindings.indices {
-            bindings[i].param = puppet.parameters.first { $0.name == bindings[i].paramName }
-        }
-    }
-
-    func update(time: Double) {
-        guard enabled else { return }
-        let x = Float(time) * speed + phase
-        let wave: Float
-        switch sineType {
-        case 1: wave = (cos(x) + 1) / 2
-        case 2: wave = (tan(x) + 1) / 2
-        default: wave = (sin(x) + 1) / 2
-        }
-        for b in bindings {
-            b.param?.pushOffset(axis: b.axis, b.range.x + wave * (b.range.y - b.range.x))
-        }
+    func serialize() -> [String: Any] {
+        var j: [String: Any] = ["groupUUID": uuid, "name": name]
+        if let c = color { j["color"] = [c.x, c.y, c.z] }
+        return j
     }
 }

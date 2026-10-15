@@ -11,17 +11,17 @@ struct FilterResult {
 /// A mesh that deforms its children: each child vertex follows the triangle
 /// of the group's mesh it sits in.
 public final class MeshGroup: Drawable {
-    private struct Triangle {
+    fileprivate struct Triangle {
         var offsetMatrix: Mat3
         var transformMatrix = Mat3.identity
     }
 
-    private var bitMask: [UInt16] = []
-    private var groupBounds = (x: Float(0), y: Float(0), z: Float(0), w: Float(0))
-    private var maskWidth = 0
-    private var triangles: [Triangle] = []
-    private var forwardMatrix = Mat4.identity
-    private var inverseMatrix = Mat4.identity
+    fileprivate var bitMask: [UInt16] = []
+    fileprivate var groupBounds = (x: Float(0), y: Float(0), z: Float(0), w: Float(0))
+    fileprivate var maskWidth = 0
+    fileprivate var triangles: [Triangle] = []
+    fileprivate var forwardMatrix = Mat4.identity
+    fileprivate var inverseMatrix = Mat4.identity
     public var translateChildren = true
     public var dynamic = false
     private(set) var isPrecalculated = false
@@ -198,4 +198,72 @@ func isPointInTriangle(_ pt: Vec2, _ p1: Vec2, _ p2: Vec2, _ p3: Vec2) -> Bool {
     let hasNeg = d1 < 0 || d2 < 0 || d3 < 0
     let hasPos = d1 > 0 || d2 > 0 || d3 > 0
     return !(hasNeg && hasPos)
+}
+
+extension MeshGroup {
+    /// Bakes this group's deformations into its children's bindings, then
+    /// empties the group (Inochi Creator's "apply to children", run on export).
+    func applyDeformToChildren(_ params: [Parameter]) {
+        guard !dynamic, !indices.isEmpty else { return }
+        if !isPrecalculated { precalculate() }
+        forwardMatrix = transform().matrix
+        inverseMatrix = globalTransform.matrix.inverse
+
+        for param in params {
+            guard let gb = param.binding(node: self, target: "deform") as? DeformBinding else { continue }
+
+            func transfer(_ node: Node, _ k: Keypoint) {
+                let drawable = node as? Drawable
+                let isComposite = (node as? Composite)?.propagateMeshGroup ?? false
+                let mustPropagate = (drawable != nil && !(node is MeshGroup)) || isComposite
+                if let d = drawable {
+                    if let b = param.getOrAddBinding(node: d, target: "deform") as? DeformBinding {
+                        var deform = b.values[k.x][k.y]
+                        if deform.count != d.vertices.count { deform = Array(repeating: .zero, count: d.vertices.count) }
+                        if filterChildren(d.vertices, &deform, d.transform().matrix) != nil {
+                            b.values[k.x][k.y] = deform
+                            b.isSet[k.x][k.y] = true
+                        }
+                    }
+                } else if translateChildren && !isComposite {
+                    let verts = [Vec2(node.localTransform.translation.x, node.localTransform.translation.y)]
+                    var deform = [Vec2(node.offsetTransform.translation.x, node.offsetTransform.translation.y)]
+                    if filterChildren(verts, &deform, node.parent?.transform().matrix ?? .identity) != nil,
+                       let bx = param.getOrAddBinding(node: node, target: "transform.t.x") as? ValueBinding,
+                       let by = param.getOrAddBinding(node: node, target: "transform.t.y") as? ValueBinding {
+                        bx.values[k.x][k.y] += deform[0].x
+                        by.values[k.x][k.y] += deform[0].y
+                        bx.isSet[k.x][k.y] = true
+                        by.isSet[k.x][k.y] = true
+                    }
+                }
+                if mustPropagate { for c in node.children { transfer(c, k) } }
+            }
+
+            for k in param.keypoints {
+                let deformation = gb.isSet(k) ? gb.values[k.x][k.y]
+                    : (gb.interpolatedOffsets(at: param.keypointOffset(k)) ?? gb.values[k.x][k.y])
+                var transformed = vertices
+                for i in transformed.indices where i < deformation.count { transformed[i] += deformation[i] }
+                for t in triangles.indices {
+                    let p1 = transformed[Int(indices[t * 3])]
+                    let p2 = transformed[Int(indices[t * 3 + 1])]
+                    let p3 = transformed[Int(indices[t * 3 + 2])]
+                    triangles[t].transformMatrix = Mat3([p2.x - p1.x, p3.x - p1.x, p1.x,
+                                                         p2.y - p1.y, p3.y - p1.y, p1.y,
+                                                         0, 0, 1]) * triangles[t].offsetMatrix
+                }
+                for c in children { transfer(c, k) }
+            }
+            param.bindings.removeAll { $0 === gb }
+            for b in param.bindings { b.reinterpolateAny() }
+        }
+        vertices = []
+        uvs = []
+        indices = []
+        deformation = []
+        translateChildren = false
+        isPrecalculated = false
+        meshEdited = true
+    }
 }

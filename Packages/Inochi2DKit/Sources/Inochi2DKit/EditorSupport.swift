@@ -201,10 +201,6 @@ public extension Node {
     }
 }
 
-public extension ParameterBinding {
-    var owner: Parameter { parameter }
-}
-
 public extension MaskBinding {
     var sourceID: UInt32 { sourceUUID }
 }
@@ -220,5 +216,47 @@ public extension Node {
             t += ["gravity", "length", "frequency", "angleDamping", "lengthDamping", "outputScale.x", "outputScale.y"]
         }
         return t.filter(hasParam)
+    }
+}
+
+public extension Puppet {
+    /// Bakes every mesh group's deformation into its children (export step).
+    func applyDeformToChildren() {
+        root.beginUpdate()
+        root.transformChanged()
+        for case let g as MeshGroup in root.allNodes() { g.applyDeformToChildren(parameters) }
+        rebuild()
+    }
+
+    /// Moves a group-like node's origin to the centre of its contents,
+    /// keeping children where they are (Creator's "Recalculate origin").
+    func recalculateOrigin(_ node: Node) {
+        for c in node.children { recalculateOrigin(c) }
+        guard node is MeshGroup || !(node is Drawable), node !== root else { return }
+        root.beginUpdate()
+        root.transformChanged()
+        let worldBefore = node.children.map { $0.transformNoLock().matrix }
+        var b: (Float, Float, Float, Float)?
+        for c in node.children {
+            let cb = c.combinedBounds()
+            b = b.map { (Swift.min($0.0, cb.0), Swift.min($0.1, cb.1), Swift.max($0.2, cb.2), Swift.max($0.3, cb.3)) } ?? cb
+        }
+        guard let bounds = b else { return }
+        let center = Vec2((bounds.0 + bounds.2) / 2, (bounds.1 + bounds.3) / 2)
+        let parentInv = (node.parent?.transform().matrix ?? .identity).inverse
+        let local = parentInv.apply(center)
+        let diff = Vec2(local.x - node.localTransform.translation.x, local.y - node.localTransform.translation.y)
+        node.localTransform.translation.x = local.x
+        node.localTransform.translation.y = local.y
+        if let g = node as? MeshGroup {
+            g.vertices = g.vertices.map { $0 - diff }
+            g.invalidate()
+        }
+        node.transformChanged()
+        for (c, m) in zip(node.children, worldBefore) {
+            c.localTransform.translation = Node.relativePosition(node.transformNoLock().matrix, m)
+            c.transformChanged()
+        }
+        rebuild()
     }
 }

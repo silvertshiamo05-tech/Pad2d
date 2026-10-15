@@ -90,6 +90,7 @@ rigcheck "turn -1,-1" params "Head:: Yaw-Pitch" -1,-1
 rigcheck "turn 0.3,-0.6" params "Head:: Yaw-Pitch" 0.3,-0.6
 rigcheck "turn -0.5,0.9" params "Head:: Yaw-Pitch" -0.5,0.9
 FRAMES=120 rigcheck physics physics "Head:: Yaw-Pitch" 1,0.5
+for f in 1 10 17 29 45; do FRAMES=$f rigcheck "animation frame $f" anim Turn; done
 
 # Pixels: Inochi2D's own OpenGL renderer (headless Mesa) vs the port's renderer.
 # Run at roughly a quarter of the iPad's screen size to keep CI fast.

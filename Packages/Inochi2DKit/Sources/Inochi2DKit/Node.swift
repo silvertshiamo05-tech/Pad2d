@@ -223,18 +223,20 @@ public class Node {
                           "rot": [t.rotation.x, t.rotation.y, t.rotation.z],
                           "scale": [t.scale.x, t.scale.y]] as [String: Any]
         j["lockToRoot"] = lockToRoot
-        let kids = children.map { $0.serialize() }
+        let kids = children.filter { !($0 is TmpNode) }.map { $0.serialize() }
         j["children"] = kids.isEmpty ? nil : kids
         return j
     }
 
     static func make(type: String) -> Node? {
         switch type {
-        case "Node", "Tmp": return Node()
+        case "Node": return Node()
+        case "Tmp": return TmpNode()
         case "Part", "AnimatedPart": return Part()
         case "Composite": return Composite()
         case "MeshGroup": return MeshGroup()
         case "SimplePhysics": return SimplePhysics()
+        case "Camera": return Camera()
         default: return nil
         }
     }
@@ -251,6 +253,31 @@ public class Node {
 
     public func allNodes() -> [Node] {
         [self] + children.flatMap { $0.allNodes() }
+    }
+}
+
+/// A temporary node; never saved (inochi2d TmpNode).
+public final class TmpNode: Node {
+    override public var typeId: String { "Tmp" }
+}
+
+/// Inochi Creator's camera (ExCamera): a viewport rectangle used for image
+/// and video export.
+public final class Camera: Node {
+    /// Output size in pixels.
+    public var viewport = Vec2(1920, 1080)
+
+    override public var typeId: String { "Camera" }
+
+    override func deserialize(_ json: [String: Any]) {
+        super.deserialize(json)
+        viewport = json.vec2("viewport") ?? Vec2(1920, 1080)
+    }
+
+    override func serialize() -> [String: Any] {
+        var j = super.serialize()
+        j["viewport"] = [viewport.x, viewport.y]
+        return j
     }
 }
 
@@ -400,8 +427,11 @@ public enum BlendMode: Int, CaseIterable, Sendable {
 public final class Part: Drawable {
     static let noTexture = UInt32.max
 
-    /// Texture slot indices: albedo, emissive, bump map.
-    public internal(set) var textureSlots: [Int] = []
+    /// Texture indices for albedo, emissive and bump map (nil when empty).
+    public internal(set) var textureIDs: [Int?] = [nil, nil, nil]
+    /// The non-empty texture indices in order, as Inochi2D 0.8 loads them
+    /// (an empty emissive slot moves the bump map into its place).
+    public var textureSlots: [Int] { textureIDs.compactMap { $0 } }
     public internal(set) var masks: [MaskBinding] = []
     public var blendMode = BlendMode.normal
     public var maskAlphaThreshold: Float = 0.5
@@ -420,10 +450,12 @@ public final class Part: Drawable {
 
     override func deserialize(_ json: [String: Any]) {
         super.deserialize(json)
-        for case let n as NSNumber in json.array("textures") ?? [] {
+        textureIDs = [nil, nil, nil]
+        for (i, item) in (json.array("textures") ?? []).prefix(3).enumerated() {
+            guard let n = item as? NSNumber else { continue }
             let id = n.doubleValue
             if id < 0 || id >= Double(Part.noTexture) { continue }
-            textureSlots.append(Int(id))
+            textureIDs[i] = Int(id)
         }
         opacity = json.float("opacity") ?? 1
         maskAlphaThreshold = json.float("mask_threshold") ?? 0.5
@@ -436,7 +468,7 @@ public final class Part: Drawable {
 
     override func serialize() -> [String: Any] {
         var j = super.serialize()
-        j["textures"] = textureSlots
+        j["textures"] = textureIDs.map { $0.map { UInt32($0) } ?? Part.noTexture }
         j["blend_mode"] = blendMode.name
         j["tint"] = [tint.x, tint.y, tint.z]
         j["screenTint"] = [screenTint.x, screenTint.y, screenTint.z]
@@ -592,7 +624,8 @@ public final class Composite: Node {
     public var tint = Vec3.one
     public var screenTint = Vec3.zero
     public internal(set) var masks: [MaskBinding] = []
-    var propagateMeshGroup = false
+    /// Whether mesh groups above deform the composite's children.
+    public var propagateMeshGroup = true
 
     var offsetOpacity: Float = 1
     var offsetTint = Vec3.one
@@ -619,7 +652,7 @@ public final class Composite: Node {
         j["screenTint"] = [screenTint.x, screenTint.y, screenTint.z]
         j["mask_threshold"] = threshold
         j["opacity"] = opacity
-        if propagateMeshGroup || extraJSON["propagate_meshgroup"] != nil { j["propagate_meshgroup"] = propagateMeshGroup }
+        j["propagate_meshgroup"] = propagateMeshGroup
         writeMasks(masks, into: &j)
         return j
     }

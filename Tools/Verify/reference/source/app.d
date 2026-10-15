@@ -2,6 +2,7 @@
 // one line per drawn part in draw order: "<count> x,y x,y ...".
 import inochi2d;
 import inochi2d.core.nodes.composite;
+import inochi2d.core.animation.player;
 import std.stdio, std.conv, std.string, std.algorithm, std.array, std.format;
 
 __gshared double now_ = 0;
@@ -43,10 +44,18 @@ void main(string[] args) {
         p.parameters[idx].value = vec2(vals[0], vals.length > 1 ? vals[1] : 0);
     }
     import std.process : environment;
-    int frames = mode == "physics" ? environment.get("FRAMES", "120").to!int : 1;
+    int frames = mode == "physics" || mode == "anim" ? environment.get("FRAMES", "120").to!int : 1;
+    // anim <name>: play an animation (looping) through the 0.8 player.
+    AnimationPlayer player;
+    if (mode == "anim") {
+        p.enableDrivers = false;
+        player = new AnimationPlayer(p);
+        player.createOrGet(args[3]).play(true);
+    }
     foreach (f; 0 .. frames) {
         now_ += 1.0 / 60;
         inUpdate();
+        if (player) player.update(1.0 / 60);
         p.update();
     }
     import std.math : cmp;

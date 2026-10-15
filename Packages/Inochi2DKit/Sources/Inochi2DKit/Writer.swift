@@ -21,6 +21,9 @@ extension Puppet {
         j["physics"] = ["pixelsPerMeter": physics.pixelsPerMeter, "gravity": physics.gravity] as [String: Any]
         j["nodes"] = root.serialize()
         j["param"] = parameters.map { $0.serialize() }
+        j["automation"] = automation.map { $0.serialize() }
+        j["animations"] = animations.mapValues { $0.serialize() }
+        j["groups"] = groups.map { $0.serialize() }
         return j
     }
 
