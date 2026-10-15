@@ -4,6 +4,10 @@ Pad2D plays [Inochi2D](https://github.com/Inochi2D/inochi2d) puppets (`.inp` fil
 
 Its runtime is a **Swift port of the Inochi2D 0.8 runtime**, the version Inochi Creator and Inochi Session use today. CI checks it against the original D code on every push (see [Verification](#verification)).
 
+![Aka and Midori at rest and with the head turned, rendered from Pad2D's draw list](docs/preview.png)
+
+*Sample models Aka and Midori by seagetch (CC BY 4.0), rendered from Pad2D's draw list.*
+
 > Pad2D is an independent, unofficial project and isn't affiliated with the Inochi2D Project. Inochi2D is © the Inochi2D Project, BSD 2-Clause licensed; see `Packages/Inochi2DKit/LICENSE`.
 
 ## Features
