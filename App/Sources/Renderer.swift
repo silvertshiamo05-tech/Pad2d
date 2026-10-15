@@ -29,6 +29,7 @@ final class Renderer: NSObject, MTKViewDelegate {
     private let stencilClearPipeline: MTLRenderPipelineState
     private let compositePipeline: MTLRenderPipelineState
     private let backgroundPipeline: MTLRenderPipelineState
+    private let overlayPipeline: MTLRenderPipelineState
     private let dsOff: MTLDepthStencilState
     private let dsWrite: MTLDepthStencilState
     private let dsContent: MTLDepthStencilState
@@ -39,10 +40,11 @@ final class Renderer: NSObject, MTKViewDelegate {
     private var layerPool: [Target] = []
     private let inFlight = DispatchSemaphore(value: 3)
     private var ring: [(MTLBuffer?, MTLBuffer?)] = Array(repeating: (nil, nil), count: 3)
+    private var overlayRing: [MTLBuffer?] = Array(repeating: nil, count: 3)
     private var ringIndex = 0
     private var lastTime = CACurrentMediaTime()
 
-    weak var controller: PuppetController?
+    weak var source: (any RenderSource)?
 
     init?(view: MTKView) {
         guard let device = view.device ?? MTLCreateSystemDefaultDevice(),
@@ -77,8 +79,10 @@ final class Renderer: NSObject, MTKViewDelegate {
               let mask = pipeline("meshVertex", "maskFragment", vertexDescriptor: vd, colorWrites: false),
               let clear = pipeline("fullscreenVertex", "stencilClearFragment", vertexDescriptor: nil, colorWrites: false),
               let comp = pipeline("fullscreenVertex", "compositeFragment", vertexDescriptor: nil, colorWrites: true),
-              let bg = pipeline("fullscreenVertex", "backgroundFragment", vertexDescriptor: nil, colorWrites: true)
+              let bg = pipeline("fullscreenVertex", "backgroundFragment", vertexDescriptor: nil, colorWrites: true),
+              let overlay = pipeline("overlayVertex", "overlayFragment", vertexDescriptor: nil, colorWrites: true)
         else { return nil }
+        overlayPipeline = overlay
         partPipeline = part
         maskPipeline = mask
         stencilClearPipeline = clear
@@ -143,7 +147,7 @@ final class Renderer: NSObject, MTKViewDelegate {
     }
 
     func draw(in view: MTKView) {
-        guard let controller, let drawable = view.currentDrawable else { return }
+        guard let source, let drawable = view.currentDrawable else { return }
         let now = CACurrentMediaTime()
         let dt = min(now - lastTime, 0.1)
         lastTime = now
@@ -153,7 +157,7 @@ final class Renderer: NSObject, MTKViewDelegate {
         if mainStencil?.width != w || mainStencil?.height != h { mainStencil = stencilTexture(w, h); layerPool = [] }
         guard let mainStencil else { return }
 
-        let frame = controller.renderFrame(deltaTime: dt, viewSize: CGSize(width: w, height: h))
+        let frame = source.renderFrame(deltaTime: dt, viewSize: CGSize(width: w, height: h))
 
         inFlight.wait()
         ringIndex = (ringIndex + 1) % ring.count
@@ -284,7 +288,7 @@ final class Renderer: NSObject, MTKViewDelegate {
                 }
             }
         }
-        let bg = controller.background
+        let bg = source.background
         enc.setRenderPipelineState(backgroundPipeline)
         enc.setDepthStencilState(dsOff)
         var colors: [SIMD4<Float>] = bg.isChecker
@@ -292,6 +296,19 @@ final class Renderer: NSObject, MTKViewDelegate {
             : [bg.color, bg.color, SIMD4(64, 0, 0, 0)]
         enc.setFragmentBytes(&colors, length: MemoryLayout<SIMD4<Float>>.stride * 3, index: 0)
         enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
+
+        // Editor overlays (wireframes, handles), already in clip space.
+        if let overlay = frame?.overlay, !overlay.isEmpty {
+            let bytes = overlay.count * MemoryLayout<OverlayVertex>.stride
+            let ob = buffer(overlayRing[ringIndex], bytes)
+            overlayRing[ringIndex] = ob
+            if let ob {
+                overlay.withUnsafeBytes { ob.contents().copyMemory(from: $0.baseAddress!, byteCount: bytes) }
+                enc.setRenderPipelineState(overlayPipeline)
+                enc.setVertexBuffer(ob, offset: 0, index: 0)
+                enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: overlay.count)
+            }
+        }
         enc.endEncoding()
         cmd.present(drawable)
         cmd.commit()

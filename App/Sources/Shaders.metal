@@ -145,3 +145,27 @@ fragment float4 backgroundFragment(VertexOut in [[stage_in]],
     float4 bg = ((cell.x + cell.y) & 1) ? b : a;
     return dst + bg * (1.0 - dst.a);
 }
+
+// MARK: Editor overlay
+
+struct OverlayVertexIn {
+    float2 position;
+    float4 color;
+};
+
+struct OverlayOut {
+    float4 position [[position]];
+    float4 color;
+};
+
+vertex OverlayOut overlayVertex(uint vid [[vertex_id]], const device OverlayVertexIn *verts [[buffer(0)]]) {
+    OverlayOut out;
+    out.position = float4(verts[vid].position, 0, 1);
+    out.color = verts[vid].color;
+    return out;
+}
+
+fragment float4 overlayFragment(OverlayOut in [[stage_in]], float4 dst [[color(0)]]) {
+    float4 src = float4(in.color.rgb * in.color.a, in.color.a);
+    return src + dst * (1.0 - src.a);
+}

@@ -21,28 +21,50 @@ enum MemoryBudget {
     static var availableBytes: Int { Int(os_proc_available_memory()) }
 }
 
+/// A small CPU copy of a texture, for hit testing and mesh generation.
+struct TexturePreview {
+    var width: Int
+    var height: Int
+    var rgba: [UInt8]
+
+    /// Alpha (0...255) at a texture coordinate.
+    func alpha(atUV uv: Vec2) -> UInt8 {
+        let x = Int(uv.x * Float(width)), y = Int(uv.y * Float(height))
+        guard x >= 0, y >= 0, x < width, y < height else { return 0 }
+        return rgba[(y * width + x) * 4 + 3]
+    }
+
+    static let maxSize = 1024
+}
+
 /// Decodes a puppet's texture blobs into premultiplied, mipmapped GPU textures.
 struct TextureLoader {
     struct Result {
         var textures: [MTLTexture?]
         var scale: Float
         var gpuBytes: Int
+        var previews: [TexturePreview?] = []
     }
 
     let device: MTLDevice
     let queue: MTLCommandQueue
 
-    func load(_ blobs: [TextureBlob]) throws -> Result {
+    func load(_ blobs: [TextureBlob], previews: Bool = false) throws -> Result {
         // Sizes first, so we can decide on a uniform downscale before decoding.
         let sizes = blobs.map(Self.imageSize)
         let total = sizes.reduce(0.0) { $0 + Double(($1?.0 ?? 0) * ($1?.1 ?? 0)) * 4 * 4 / 3 }
         let scale = Float(min(1, (Double(MemoryBudget.textureBytes) / max(total, 1)).squareRoot()))
 
         var out: [MTLTexture?] = []
+        var previewList: [TexturePreview?] = []
         var bytes = 0
         for (i, blob) in blobs.enumerated() {
             let tex: MTLTexture? = try autoreleasepool {
-                guard var (pixels, w, h) = Self.decode(blob) else { return nil }
+                guard var (pixels, w, h) = Self.decode(blob) else {
+                    if previews { previewList.append(nil) }
+                    return nil
+                }
+                if previews { previewList.append(Self.preview(pixels, w, h)) }
                 let s = min(scale, Float(MemoryBudget.maxTextureSize) / Float(max(w, h)))
                 if s < 0.999 {
                     let nw = max(1, Int(Float(w) * s)), nh = max(1, Int(Float(h) * s))
@@ -55,7 +77,30 @@ struct TextureLoader {
             if let tex { bytes += tex.allocatedSize }
             out.append(tex)
         }
-        return Result(textures: out, scale: scale, gpuBytes: bytes)
+        return Result(textures: out, scale: scale, gpuBytes: bytes, previews: previewList)
+    }
+
+    /// Uploads one texture at full size (for textures added while editing).
+    func loadOne(_ blob: TextureBlob) throws -> (MTLTexture?, TexturePreview?) {
+        try autoreleasepool {
+            guard var (pixels, w, h) = Self.decode(blob) else { return (nil, nil) }
+            let preview = Self.preview(pixels, w, h)
+            let s = Float(MemoryBudget.maxTextureSize) / Float(max(w, h))
+            if s < 1 {
+                let nw = max(1, Int(Float(w) * s)), nh = max(1, Int(Float(h) * s))
+                pixels = Self.resize(pixels, w, h, nw, nh)
+                w = nw
+                h = nh
+            }
+            return (try makeTexture(pixels, w, h, label: "added"), preview)
+        }
+    }
+
+    static func preview(_ px: [UInt8], _ w: Int, _ h: Int) -> TexturePreview {
+        let s = min(1, Float(TexturePreview.maxSize) / Float(max(w, h)))
+        if s >= 1 { return TexturePreview(width: w, height: h, rgba: px) }
+        let nw = max(1, Int(Float(w) * s)), nh = max(1, Int(Float(h) * s))
+        return TexturePreview(width: nw, height: nh, rgba: resize(px, w, h, nw, nh))
     }
 
     private func makeTexture(_ pixels: [UInt8], _ w: Int, _ h: Int, label: String) throws -> MTLTexture? {
@@ -103,8 +148,12 @@ struct TextureLoader {
         if blob.encoding == .tga, let img = try? TGADecoder.decode(blob.data) {
             return (img.rgba, img.width, img.height)
         }
-        // PNG (and anything else ImageIO understands).
-        guard let src = CGImageSourceCreateWithData(blob.data as CFData, nil),
+        return decodeImage(blob.data)
+    }
+
+    /// Straight-alpha RGBA8 from PNG, JPEG, HEIC and other ImageIO formats.
+    static func decodeImage(_ data: Data) -> ([UInt8], Int, Int)? {
+        guard let src = CGImageSourceCreateWithData(data as CFData, nil),
               let image = CGImageSourceCreateImageAtIndex(src, 0, [kCGImageSourceShouldCache: false] as CFDictionary)
         else { return nil }
         let w = image.width, h = image.height

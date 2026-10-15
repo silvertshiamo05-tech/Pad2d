@@ -31,12 +31,26 @@ enum TrackingMode: String, CaseIterable, Identifiable {
     }
 }
 
+/// Something the Metal renderer can draw.
+@MainActor
+protocol RenderSource: AnyObject {
+    var background: BackgroundStyle { get }
+    func renderFrame(deltaTime: Double, viewSize: CGSize) -> RenderFrame?
+}
+
+/// A coloured vertex for editor overlays, in clip space.
+struct OverlayVertex {
+    var position: SIMD2<Float>
+    var color: SIMD4<Float>
+}
+
 /// What the renderer needs for one frame.
 struct RenderFrame {
     let list: DrawList
     let viewProjection: simd_float4x4
     let preservePixels: Bool
     let textures: [MTLTexture?]
+    var overlay: [OverlayVertex] = []
 
     func texture(_ slot: Int) -> MTLTexture? {
         slot >= 0 && slot < textures.count ? textures[slot] : nil
@@ -45,7 +59,7 @@ struct RenderFrame {
 
 /// Owns a loaded puppet and everything that drives it each frame.
 @MainActor
-final class PuppetController: ObservableObject {
+final class PuppetController: ObservableObject, RenderSource {
     enum State: Equatable {
         case loading
         case ready

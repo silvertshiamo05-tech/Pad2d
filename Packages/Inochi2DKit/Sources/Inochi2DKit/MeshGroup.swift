@@ -22,7 +22,7 @@ public final class MeshGroup: Drawable {
     private var triangles: [Triangle] = []
     private var forwardMatrix = Mat4.identity
     private var inverseMatrix = Mat4.identity
-    var translateChildren = true
+    public var translateChildren = true
     public var dynamic = false
     private(set) var isPrecalculated = false
 

@@ -48,11 +48,22 @@ public final class Puppet {
         try self.init(data: Data(contentsOf: url, options: .alwaysMapped))
     }
 
-    public init(data: Data) throws {
+    public convenience init(data: Data) throws {
         let file = try INPFile(data: data)
-        textures = file.textures
-        extensions = file.extensions
-        let json = file.json
+        self.init(json: file.json, textures: file.textures, extensions: file.extensions)
+    }
+
+    /// Rebuilds a puppet from a snapshot (see `snapshot()`).
+    public convenience init(snapshot: PuppetSnapshot) throws {
+        guard let json = try JSONSerialization.jsonObject(with: snapshot.json) as? [String: Any] else {
+            throw INPError.badJSON("snapshot")
+        }
+        self.init(json: json, textures: snapshot.textures, extensions: snapshot.extensions)
+    }
+
+    init(json: [String: Any], textures: [TextureBlob], extensions: [String: Data]) {
+        self.textures = textures
+        self.extensions = extensions
         extraJSON = json
         extraJSON["nodes"] = nil
         extraJSON["param"] = nil

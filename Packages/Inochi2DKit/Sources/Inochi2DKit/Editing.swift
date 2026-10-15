@@ -199,6 +199,7 @@ public extension Puppet {
         let m = sources.map { MaskBinding(sourceUUID: $0.0, mode: $0.1, source: nil) }
         if let p = node as? Part { p.masks = resolveMasks(m, puppet: self) }
         if let c = node as? Composite { c.masks = resolveMasks(m, puppet: self) }
+        if let c = node as? Composite { c.masks = resolveMasks(m, puppet: self) }
     }
 
     // MARK: Textures
@@ -230,35 +231,40 @@ public extension Puppet {
 
     /// Affine map from a drawable's rest vertices to its texture coordinates.
     func uvMapping(for d: Drawable) -> (Vec2) -> Vec2 {
-        // Least squares fit of u = a*x + b*y + c and v = d*x + e*y + f.
-        var sxx = 0.0, sxy = 0.0, syy = 0.0, sx = 0.0, sy = 0.0, n = 0.0
-        var su = (0.0, 0.0, 0.0), sv = (0.0, 0.0, 0.0)
-        for (p, t) in zip(d.vertices, d.uvs) {
-            let x = Double(p.x), y = Double(p.y), u = Double(t.x), v = Double(t.y)
-            sxx += x * x; sxy += x * y; syy += y * y; sx += x; sy += y; n += 1
-            su.0 += x * u; su.1 += y * u; su.2 += u
-            sv.0 += x * v; sv.1 += y * v; sv.2 += v
+        affineFit(from: d.vertices, to: d.uvs) ?? { _ in .zero }
+    }
+
+    /// Affine map from texture coordinates to a drawable's rest vertices.
+    func positionMapping(for d: Drawable) -> ((Vec2) -> Vec2)? {
+        affineFit(from: d.uvs, to: d.vertices)
+    }
+
+    /// A new mesh for `d` hugging the opaque pixels of its texture.
+    /// - Parameters:
+    ///   - rgba: the drawable's texture (any resolution), RGBA8.
+    ///   - spacing: vertex spacing in mesh units.
+    func autoMesh(_ d: Drawable, rgba: [UInt8], width: Int, height: Int, spacing: Float) -> GeneratedMesh? {
+        guard let toPos = positionMapping(for: d), !d.uvs.isEmpty, width > 0, height > 0 else { return nil }
+        // Texture area the drawable covers.
+        let us = d.uvs.map(\.x), vs = d.uvs.map(\.y)
+        let x0 = Swift.max(0, Int((us.min()! * Float(width)).rounded(.down)))
+        let y0 = Swift.max(0, Int((vs.min()! * Float(height)).rounded(.down)))
+        let x1 = Swift.min(width, Int((us.max()! * Float(width)).rounded(.up)))
+        let y1 = Swift.min(height, Int((vs.max()! * Float(height)).rounded(.up)))
+        guard x1 > x0, y1 > y0 else { return nil }
+        let cw = x1 - x0, ch = y1 - y0
+        var crop = [UInt8](repeating: 0, count: cw * ch * 4)
+        for y in 0..<ch {
+            let src = ((y0 + y) * width + x0) * 4
+            crop[(y * cw * 4)..<((y + 1) * cw * 4)] = rgba[src..<(src + cw * 4)]
         }
-        func solve(_ r: (Double, Double, Double)) -> (Double, Double, Double)? {
-            let m = [[sxx, sxy, sx], [sxy, syy, sy], [sx, sy, n]]
-            let det = m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1]) - m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0])
-                + m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0])
-            guard abs(det) > 1e-9 else { return nil }
-            func d3(_ a: [[Double]]) -> Double {
-                a[0][0] * (a[1][1] * a[2][2] - a[1][2] * a[2][1]) - a[0][1] * (a[1][0] * a[2][2] - a[1][2] * a[2][0])
-                    + a[0][2] * (a[1][0] * a[2][1] - a[1][1] * a[2][0])
-            }
-            let rr = [r.0, r.1, r.2]
-            var out = [0.0, 0.0, 0.0]
-            for c in 0..<3 {
-                var a = m
-                for row in 0..<3 { a[row][c] = rr[row] }
-                out[c] = d3(a) / det
-            }
-            return (out[0], out[1], out[2])
-        }
-        guard let a = solve(su), let b = solve(sv) else { return { _ in .zero } }
-        return { p in Vec2(Float(a.0 * Double(p.x) + a.1 * Double(p.y) + a.2), Float(b.0 * Double(p.x) + b.1 * Double(p.y) + b.2)) }
+        // Spacing is given in mesh units; convert to texture pixels.
+        let p0 = toPos(Vec2(0, 0)), p1 = toPos(Vec2(1 / Float(width), 0))
+        let unitsPerPixel = Swift.max(p0.distance(to: p1), 1e-6)
+        let m = MeshGenerator.auto(rgba: crop, width: cw, height: ch, spacing: spacing / unitsPerPixel,
+                                   margin: 6 / unitsPerPixel)
+        let points = m.points.map { toPos(Vec2((Float(x0) + $0.x) / Float(width), (Float(y0) + $0.y) / Float(height))) }
+        return GeneratedMesh(points: points, indices: m.indices)
     }
 
     /// Replaces a drawable's mesh. Deformations recorded on its bindings are
@@ -456,6 +462,37 @@ public extension Puppet {
     func bindings(for node: Node) -> [(Parameter, Binding)] {
         parameters.flatMap { p in p.bindings.filter { $0.node === node }.map { (p, $0) } }
     }
+}
+
+/// Least squares affine fit mapping `from` points onto `to` points.
+func affineFit(from: [Vec2], to: [Vec2]) -> ((Vec2) -> Vec2)? {
+    var sxx = 0.0, sxy = 0.0, syy = 0.0, sx = 0.0, sy = 0.0, n = 0.0
+    var su = (0.0, 0.0, 0.0), sv = (0.0, 0.0, 0.0)
+    for (p, t) in zip(from, to) {
+        let x = Double(p.x), y = Double(p.y), u = Double(t.x), v = Double(t.y)
+        sxx += x * x; sxy += x * y; syy += y * y; sx += x; sy += y; n += 1
+        su.0 += x * u; su.1 += y * u; su.2 += u
+        sv.0 += x * v; sv.1 += y * v; sv.2 += v
+    }
+    let m = [[sxx, sxy, sx], [sxy, syy, sy], [sx, sy, n]]
+    func d3(_ a: [[Double]]) -> Double {
+        a[0][0] * (a[1][1] * a[2][2] - a[1][2] * a[2][1]) - a[0][1] * (a[1][0] * a[2][2] - a[1][2] * a[2][0])
+            + a[0][2] * (a[1][0] * a[2][1] - a[1][1] * a[2][0])
+    }
+    let det = d3(m)
+    guard abs(det) > 1e-12 else { return nil }
+    func solve(_ r: (Double, Double, Double)) -> (Double, Double, Double) {
+        let rr = [r.0, r.1, r.2]
+        var out = [0.0, 0.0, 0.0]
+        for c in 0..<3 {
+            var a = m
+            for row in 0..<3 { a[row][c] = rr[row] }
+            out[c] = d3(a) / det
+        }
+        return (out[0], out[1], out[2])
+    }
+    let a = solve(su), b = solve(sv)
+    return { p in Vec2(Float(a.0 * Double(p.x) + a.1 * Double(p.y) + a.2), Float(b.0 * Double(p.x) + b.1 * Double(p.y) + b.2)) }
 }
 
 /// Barycentric interpolation of per-vertex values at a point; points outside

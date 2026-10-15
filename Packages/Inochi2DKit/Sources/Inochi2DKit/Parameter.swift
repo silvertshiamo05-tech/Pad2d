@@ -7,7 +7,7 @@ public enum ParamMergeMode: String, Sendable {
     case additive, weighted, multiplicative, forced, passthrough
 }
 
-public enum InterpolateMode: Sendable {
+public enum InterpolateMode: CaseIterable, Sendable {
     case nearest, linear, cubic
 
     init(_ any: Any?) {

@@ -15,6 +15,16 @@ if args.count > 3 && args[2] == "rig" {
     try buildRig().fileData().write(to: URL(fileURLWithPath: args[3]))
     exit(0)
 }
+if args.count > 2 && args[2] == "bench-snapshot" {
+    let p = try Puppet(contentsOf: URL(fileURLWithPath: args[1]))
+    var t = Date()
+    let s = p.snapshot()
+    print("snapshot", s.byteCount, Date().timeIntervalSince(t))
+    t = Date()
+    _ = try Puppet(snapshot: s)
+    print("restore", Date().timeIntervalSince(t))
+    exit(0)
+}
 if args.count > 8 && args[2] == "render" {
     // render <model> render <out.rgba> <width> <height> <centreX> <centreY> <scale>
     try renderToRGBA(model: args[1], out: args[3], width: Int(args[4])!, height: Int(args[5])!,

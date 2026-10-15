@@ -101,6 +101,16 @@ final class EditingTests: XCTestCase {
         XCTAssertEqual(half.opacity, 0.75, accuracy: 1e-4)
     }
 
+    func testSnapshotRestore() throws {
+        let (puppet, part, param) = try makeRig()
+        let snap = puppet.snapshot()
+        puppet.remove(part)
+        XCTAssertTrue(puppet.parts.isEmpty)
+        let restored = try Puppet(snapshot: snap)
+        XCTAssertEqual(restored.parts.map(\.uuid), [part.uuid])
+        XCTAssertEqual(restored.parameter(named: param.name)?.bindingCount, 2)
+    }
+
     func testKeypointInsertKeepsCurve() throws {
         let (puppet, part, param) = try makeRig()
         let k = puppet.addKeypoint(param, axis: 0, at: 0.5)
@@ -241,5 +251,60 @@ final class PSDTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(xs.max()!, 48)
         XCTAssertLessThanOrEqual(ys.min()!, 16)
         XCTAssertGreaterThanOrEqual(ys.max()!, 48)
+    }
+}
+
+final class AutoMeshTests: XCTestCase {
+    func testAutoMeshForAtlasPart() throws {
+        let puppet = Puppet()
+        // 64x64 atlas; the part uses its right half, where a disc is opaque.
+        let w = 64, h = 64
+        var px = [UInt8](repeating: 0, count: w * h * 4)
+        for y in 0..<h {
+            for x in 32..<64 where pow(Float(x - 48), 2) + pow(Float(y - 32), 2) < 100 { px[(y * w + x) * 4 + 3] = 255 }
+        }
+        let slot = puppet.addTexture(rgba: px, width: w, height: h)
+        let part = puppet.makePart(name: "P", textureSlot: slot, width: 320, height: 640)
+        // Map the part to the right half of the atlas.
+        puppet.setMesh(part, vertices: part.vertices, indices: part.indices,
+                       uvs: part.uvs.map { Vec2(0.5 + $0.x * 0.5, $0.y) })
+        let m = try XCTUnwrap(puppet.autoMesh(part, rgba: px, width: w, height: h, spacing: 40))
+        // Disc radius 10 px = 100 mesh units, centred on the part's centre.
+        let xs = m.points.map(\.x), ys = m.points.map(\.y)
+        XCTAssertLessThanOrEqual(xs.min()!, -95)
+        XCTAssertGreaterThanOrEqual(xs.max()!, 95)
+        XCTAssertGreaterThan(xs.min()!, -160)
+        XCTAssertLessThan(abs(ys.min()! + ys.max()!), 20)
+        XCTAssertEqual(MeshGenerator.triangulate(m.points).count % 3, 0)
+    }
+}
+
+final class DuplicateTests: XCTestCase {
+    func testDuplicateCopiesBindingsAndMasks() throws {
+        let puppet = Puppet()
+        let px = [UInt8](repeating: 255, count: 4 * 4 * 4)
+        let slot = puppet.addTexture(rgba: px, width: 4, height: 4)
+        let group = puppet.makeNode(.node, name: "Eye")
+        puppet.add(group, to: puppet.root)
+        let white = puppet.makePart(name: "White", textureSlot: slot, width: 40, height: 20)
+        let iris = puppet.makePart(name: "Iris", textureSlot: slot, width: 10, height: 10)
+        puppet.add(white, to: group)
+        puppet.add(iris, to: group)
+        puppet.setMasks(iris, sources: [(white.uuid, .mask)])
+        let p = puppet.createParameter(name: "Look", isVec2: false)
+        puppet.setValue(p, iris, target: "transform.t.x", at: Keypoint(1, 0), value: 5)
+        iris.setRestValue("opacity", 0.5)
+
+        let copy = try XCTUnwrap(puppet.duplicate(group))
+        XCTAssertEqual(puppet.root.children.map(\.name), ["Eye", "Eye Copy"])
+        let iris2 = try XCTUnwrap(copy.children.last as? Part)
+        XCTAssertNotEqual(iris2.uuid, iris.uuid)
+        XCTAssertEqual(iris2.restValue("opacity"), 0.5)
+        XCTAssertEqual(iris2.masks.first?.sourceID, copy.children.first?.uuid)
+        XCTAssertEqual(p.bindingCount, 2)
+        XCTAssertEqual(puppet.value(p, iris2, target: "transform.t.x", at: Keypoint(1, 0)), 5)
+
+        let reloaded = try Puppet(data: puppet.fileData())
+        XCTAssertEqual(reloaded.parameters.first?.bindingCount, 2)
     }
 }

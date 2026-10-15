@@ -20,6 +20,12 @@ public enum MeshGenerator {
                       indices: [0, 1, 2, 2, 1, 3])
     }
 
+    /// Delaunay triangulation of arbitrary points, as mesh indices.
+    public static func triangulate(_ points: [Vec2]) -> [UInt16] {
+        guard points.count >= 3, points.count <= Int(UInt16.max) else { return [] }
+        return Delaunay.triangulate(points).flatMap { [UInt16($0.0), UInt16($0.1), UInt16($0.2)] }
+    }
+
     /// A mesh that hugs the opaque pixels of an RGBA8 image.
     /// - Parameters:
     ///   - spacing: approximate distance between vertices, in pixels.

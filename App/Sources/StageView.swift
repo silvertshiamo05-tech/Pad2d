@@ -14,8 +14,11 @@ struct StageView: View {
     @State private var showTracking = false
     @State private var presenting = false
 
-    init(url: URL) {
+    private let canEdit: Bool
+
+    init(url: URL, canEdit: Bool = true) {
         _controller = StateObject(wrappedValue: PuppetController(url: url))
+        self.canEdit = canEdit
     }
 
     var body: some View {
@@ -103,6 +106,11 @@ struct StageView: View {
             } label: {
                 Image(systemName: "ellipsis.circle")
             }
+            if canEdit {
+                NavigationLink(value: Route.edit(controller.modelURL)) {
+                    Label("Edit", systemImage: "slider.horizontal.3")
+                }
+            }
             Button { withAnimation { showPanel.toggle() } } label: { Image(systemName: "sidebar.right") }
         }
     }
@@ -152,7 +160,7 @@ struct PuppetCanvas: UIViewRepresentable {
         func attach(_ view: MTKView) {
             self.view = view
             renderer = Renderer(view: view)
-            renderer?.controller = controller
+            renderer?.source = controller
             view.delegate = renderer
 
             let pinch = UIPinchGestureRecognizer(target: self, action: #selector(onPinch(_:)))

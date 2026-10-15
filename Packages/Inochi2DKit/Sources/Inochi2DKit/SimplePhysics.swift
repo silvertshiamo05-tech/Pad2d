@@ -117,8 +117,8 @@ final class SpringPendulum: PhysicsSystem {
 
 /// Drives a parameter from a simulated pendulum hanging off this node.
 public final class SimplePhysics: Node {
-    public enum Model: String { case pendulum, springPendulum }
-    public enum MapMode: String { case angleLength, xy, lengthAngle, yx }
+    public enum Model: String, CaseIterable, Sendable { case pendulum, springPendulum }
+    public enum MapMode: String, CaseIterable, Sendable { case angleLength, xy, lengthAngle, yx }
 
     var paramRef = UInt32.max
     public private(set) weak var param: Parameter?

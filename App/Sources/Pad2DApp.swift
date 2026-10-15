@@ -4,6 +4,14 @@ import UniformTypeIdentifiers
 extension UTType {
     static let inochiPuppet = UTType(importedAs: "com.inochi2d.inp", conformingTo: .data)
     static let inochiCreatorProject = UTType(importedAs: "com.inochi2d.inx", conformingTo: .data)
+    static let photoshop = UTType(filenameExtension: "psd") ?? .image
+    static let photoshopLarge = UTType(filenameExtension: "psb") ?? .image
+}
+
+/// Screens pushed from the library.
+enum Route: Hashable {
+    case play(URL)
+    case edit(URL)
 }
 
 @main
@@ -89,25 +97,30 @@ final class ModelLibrary: ObservableObject {
 struct LibraryView: View {
     @EnvironmentObject private var library: ModelLibrary
     @State private var importing = false
+    @State private var importingPSD = false
+    @State private var psd: PSDSource?
     @State private var showAbout = false
+    @State private var path: [Route] = []
 
     private let columns = [GridItem(.adaptive(minimum: 200), spacing: 16)]
 
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $path) {
             ScrollView {
                 if library.models.isEmpty {
                     ContentUnavailableView("No models yet", systemImage: "person.crop.square",
-                                           description: Text("Import an Inochi2D model (.inp or .inx) from the Files app."))
+                                           description: Text("Import an Inochi2D model (.inp or .inx), or create one from a layered PSD."))
                         .padding(.top, 80)
                 }
                 LazyVGrid(columns: columns, spacing: 16) {
                     ForEach(library.models) { model in
-                        NavigationLink(value: model) {
-                            ModelCard(model: model)
+                        NavigationLink(value: Route.play(model.url)) {
+                            ModelCard(model: model) { path.append(.edit(model.url)) }
                         }
                         .buttonStyle(.plain)
                         .contextMenu {
+                            Button { path.append(.play(model.url)) } label: { Label("Play", systemImage: "play") }
+                            Button { path.append(.edit(model.url)) } label: { Label("Edit", systemImage: "slider.horizontal.3") }
                             if !model.bundled {
                                 Button(role: .destructive) { library.delete(model) } label: {
                                     Label("Delete", systemImage: "trash")
@@ -119,14 +132,19 @@ struct LibraryView: View {
                 .padding()
             }
             .navigationTitle("Pad2D")
-            .navigationDestination(for: ModelLibrary.Model.self) { model in
-                StageView(url: model.url)
+            .navigationDestination(for: Route.self) { route in
+                switch route {
+                case let .play(url): StageView(url: url)
+                case let .edit(url): EditorView(url: url)
+                }
             }
+            .onChange(of: path) { _, p in if p.isEmpty { library.refresh() } }
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button { showAbout = true } label: { Image(systemName: "info.circle") }
                 }
-                ToolbarItem(placement: .topBarTrailing) {
+                ToolbarItemGroup(placement: .topBarTrailing) {
+                    Button { importingPSD = true } label: { Label("New from PSD", systemImage: "plus.square.on.square") }
                     Button { importing = true } label: { Label("Import", systemImage: "square.and.arrow.down") }
                 }
             }
@@ -135,6 +153,19 @@ struct LibraryView: View {
                 if case let .success(urls) = result { library.importFiles(urls) }
             }
             .sheet(isPresented: $showAbout) { AboutView() }
+            .background {
+                // A second importer needs its own view in iOS 17.
+                Color.clear
+                    .fileImporter(isPresented: $importingPSD, allowedContentTypes: [.photoshop, .photoshopLarge, .data]) { result in
+                        if case let .success(url) = result { psd = PSDSource(url: url) }
+                    }
+            }
+            .sheet(item: $psd) { source in
+                PSDImportSheet(source: source) { url in
+                    library.refresh()
+                    path.append(.edit(url))
+                }
+            }
             .alert(library.message ?? "", isPresented: Binding(get: { library.message != nil },
                                                                set: { if !$0 { library.message = nil } })) {
                 Button("OK", role: .cancel) {}
@@ -145,6 +176,7 @@ struct LibraryView: View {
 
 private struct ModelCard: View {
     let model: ModelLibrary.Model
+    let edit: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -155,7 +187,16 @@ private struct ModelCard: View {
                     .foregroundStyle(.secondary)
             }
             .aspectRatio(1, contentMode: .fit)
-            Text(model.name).font(.headline).lineLimit(1)
+            HStack {
+                Text(model.name).font(.headline).lineLimit(1)
+                Spacer()
+                Button(action: edit) {
+                    Label("Edit", systemImage: "slider.horizontal.3")
+                        .font(.caption.weight(.semibold))
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+            }
             HStack(spacing: 6) {
                 Text(model.url.pathExtension.uppercased())
                 Text("·")
