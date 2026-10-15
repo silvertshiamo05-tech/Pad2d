@@ -12,25 +12,31 @@ Its runtime is a **Swift port of the Inochi2D 0.8 runtime**, the version Inochi 
 
 ## Editor
 
-Tap **Edit** on any model, or **New from PSD** in the library.
+Tap **Edit** on any model, or **New from PSD** in the library. The editor follows Inochi Creator 0.8's layout and modes. A hardware keyboard works, and **Ctrl / Shift / Alt** toggles on the toolbar stand in for one.
 
-- **New from PSD:** every layer becomes a part, placed where it is in the PSD, with an auto-generated mesh. Folders become groups, or composites if they have a blend mode. Save the PSD as 8-bit RGB (PSB works too).
 - **Model mode:**
-  - Tap a part to select it, and use **Move** to drag it.
-  - The inspector edits position, rotation, scale, z-sort, opacity, blend mode, tint, masks, mesh groups and physics.
-  - Drag a number's label sideways to scrub its value.
+  - Tap or lasso parts to select them, and long-press for overlapping parts.
+  - **Move, scale and rotate handles**, plus arrow-key nudge.
+  - The node tree has multi-select, drag-and-drop reparenting, copy/paste, and Creator's context menu (lock to root, recalculate origin, convert node types).
+  - The inspector covers transform, snapping, z-sort, blend mode, tint and screen tint, masks, the 3 texture slots (albedo/emission/bump), mesh groups, physics, cameras and automation.
 - **Mesh mode:**
-  - Tap to add vertices, drag them to move, or switch to Delete.
-  - **Auto Mesh** wraps the part's opaque pixels.
-  - Existing deformations are carried over to the new mesh.
+  - Point, edge, grid and lasso tools.
+  - Horizontal/vertical mirroring and auto-connect, with a live triangulation preview.
+  - **Auto Mesh** (contour or grid presets) for one part or many, copying a mesh from another part, and a local undo stack.
 - **Rigging:**
-  - In **Parameters**, create a 1D or 2D parameter and press its record button to arm it.
-  - At each keypoint, use the **Deform** brush (finger or Pencil) to push vertices, or change values in the inspector. Those are recorded as that keypoint's offsets.
-  - Keypoints in between are filled in the same way Inochi Creator does it.
-  - Red dots on the pad show the keypoints the selected part has recorded.
-  - Add keypoint rows and columns from a parameter's ••• menu.
-- **Physics:** add a Physics node under the part it hangs from, pick its parameter, and turn on the wind button to preview.
-- **Undo/redo**, **Save**, **Play** (opens the model with tracking), and **Export** to Files as `.inx` (Inochi Creator) or `.inp` (Inochi Session).
+  - Create 1D/2D parameters or use presets, group them, and set up flip pairs.
+  - Arm a parameter, then deform with the **points**, **brush** (circle, double threshold or rectangle; drag or flow), **path** (spline define/transform) or **lasso** tools.
+  - Keypoint actions: copy, paste, paste-flipped, mirror, auto-flip, swap, reset, unset, extrapolate and mirrored autofill.
+  - You can also convert to 2D, split a parameter, edit its axis points, change its merge mode, and transfer deformation between parts.
+- **Animation mode:** create animations (fps, lead-in/out, additive and weight), key parameters, scrub the timeline and play back with Creator's interpolation.
+- **Test mode:** play the model with physics, automation and face tracking, with bindings from ARKit blend shapes to parameters.
+- **Tools and files:**
+  - Named undo history, autosave with crash recovery, and recent projects.
+  - PSD import and **PSD merge**, which updates an existing rig from a changed PSD.
+  - Texture premultiply and color bleed, and node ID repair.
+- **Export:**
+  - `.inx` and `.inp`, with an atlas packer that has scale, padding and watermark options.
+  - PNG/JPEG/TGA images and videos (H.264, or HEVC with transparency) rendered through a Camera node.
 
 Files saved by Pad2D load in the original Inochi2D 0.8.7 and behave the same (checked in CI).
 
@@ -114,6 +120,7 @@ Tools/Verify/run.sh                     # needs ldc2/dub, swift, python3, Mesa E
 ## Not yet supported
 
 - Inochi2D 0.9 files (`TRNSRTS2`). 0.9 is still being rewritten upstream, and its current code can't animate models yet.
-- Some of Inochi Creator's editing tools: mesh groups can't deform children through the brush yet, there's no automatic mirroring of deformations, and no animation timeline.
-- Emission and bump maps (0.8 renders these to extra buffers for scene lighting).
-- Animations stored in the model (the 0.8 animation player), and VMC/OpenSeeFace network tracking.
+- Emission/bump rendering, scene lighting and post-processing. The texture slots are kept and saved, but not drawn yet.
+- Krita (`.kra`) import, and importing an `.inp` or a folder of images as a new project.
+- VMC/OpenSeeFace network tracking.
+- Playing a model's animations from the viewer screen (they play in the editor's Animation and Test modes).
