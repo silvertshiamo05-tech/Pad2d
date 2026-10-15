@@ -8,3 +8,7 @@ xcuserdata/
 App/Resources/Models/*.inx
 App/Resources/Models/*.inp
 Tools/Verify/build/
+Tools/Verify/reference/inochi2d-reference
+Tools/Verify/glreference/inochi2d-glreference
+Tools/Verify/*/.dub/
+Tools/Verify/port/.build/
